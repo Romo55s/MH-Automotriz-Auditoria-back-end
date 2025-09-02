@@ -2,6 +2,15 @@ const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
 const { GoogleSheetsError } = require('../middleware/errorHandler');
+const config = require('../config/googleSheets');
+
+// Cache for sheet data to reduce API calls
+const sheetDataCache = new Map();
+
+// Rate limiting
+let lastRequestTime = 0;
+let requestCount = 0;
+let requestWindowStart = Date.now();
 
 class GoogleSheetsService {
   constructor() {
@@ -45,6 +54,102 @@ class GoogleSheetsService {
     }
   }
 
+  // Rate limiting function to prevent quota exceeded errors
+  async rateLimit() {
+    const now = Date.now();
+    const timeSinceLastRequest = now - lastRequestTime;
+    const timeSinceWindowStart = now - requestWindowStart;
+    
+    // Reset request count every minute
+    if (timeSinceWindowStart >= 60000) {
+      requestCount = 0;
+      requestWindowStart = now;
+    }
+    
+    // Check if we're approaching the rate limit
+    const maxRequests = Math.floor(config.quota.readRequestsPerMinute * config.quota.safetyMargin);
+    if (requestCount >= maxRequests) {
+      const waitTime = 60000 - timeSinceWindowStart;
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      requestCount = 0;
+      requestWindowStart = Date.now();
+    }
+    
+    // Minimum interval between requests
+    if (timeSinceLastRequest < config.rateLimiting.minRequestInterval) {
+      const delay = config.rateLimiting.minRequestInterval - timeSinceLastRequest;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    
+    lastRequestTime = Date.now();
+    requestCount++;
+  }
+
+  // Retry mechanism with exponential backoff for quota errors
+  async retryWithBackoff(operation, maxRetries = null) {
+    const retries = maxRetries || config.retry.maxRetries;
+    
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        const isQuotaError = error.message && error.message.includes('Quota exceeded');
+        
+        if (isQuotaError && attempt < retries) {
+          const delay = Math.min(
+            Math.pow(2, attempt) * config.retry.baseDelay,
+            config.retry.maxDelay
+          );
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
+        throw error;
+      }
+    }
+  }
+
+  // Get cached data or fetch from API
+  getCachedData(sheetName) {
+    if (!config.caching.enabled) return null;
+    
+    const cacheKey = `${this.spreadsheetId}_${sheetName}`;
+    const cached = sheetDataCache.get(cacheKey);
+    
+    if (cached && (Date.now() - cached.timestamp) < config.caching.duration) {
+      return cached.data;
+    }
+    
+    return null;
+  }
+
+  // Set cached data
+  setCachedData(sheetName, data) {
+    if (!config.caching.enabled) return;
+    
+    // Limit cache size
+    if (sheetDataCache.size >= config.caching.maxCacheSize) {
+      const firstKey = sheetDataCache.keys().next().value;
+      sheetDataCache.delete(firstKey);
+    }
+    
+    const cacheKey = `${this.spreadsheetId}_${sheetName}`;
+    sheetDataCache.set(cacheKey, {
+      data: data,
+      timestamp: Date.now()
+    });
+  }
+
+  // Clear cache for a specific sheet
+  clearCache(sheetName = null) {
+    if (sheetName) {
+      const cacheKey = `${this.spreadsheetId}_${sheetName}`;
+      sheetDataCache.delete(cacheKey);
+    } else {
+      sheetDataCache.clear();
+    }
+  }
+
   async ensureSheetExists(sheetName) {
     await this.ensureInitialized();
     
@@ -62,12 +167,12 @@ class GoogleSheetsService {
           // MonthlySummary with all required fields
           const headers = [
             'Month', 'Year', 'Agency', 'Status', 'Created At', 'Created By', 'User Name', 
-            'Total Scans', 'Session ID', 'Completed At'
+            'Total Scans', 'Session ID', 'Completed At', 'Finished By'
           ];
           await this.createSheet(sheetName, headers);
         } else {
           // Agency sheets: simple and clean, only current month data
-          const headers = ['Date', 'Barcode'];
+          const headers = ['Date', 'Barcode', 'Scanned By'];
           await this.createSheet(sheetName, headers);
         }
         console.log(`✅ Created sheet: ${sheetName}`);
@@ -117,6 +222,9 @@ class GoogleSheetsService {
     await this.ensureInitialized();
     await this.ensureSheetExists(sheetName);
     
+    // Apply rate limiting
+    await this.rateLimit();
+    
     try {
       const response = await this.sheets.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
@@ -124,6 +232,9 @@ class GoogleSheetsService {
         valueInputOption: 'USER_ENTERED',
         resource: { values: [values] }
       });
+      
+      // Clear cache since data has changed
+      this.clearCache(sheetName);
       
       return response.data;
     } catch (error) {
@@ -151,16 +262,31 @@ class GoogleSheetsService {
   async getSheetData(sheetName, range = 'A:Z') {
     await this.ensureInitialized();
     
+    // Check cache first
+    const cachedData = this.getCachedData(sheetName);
+    if (cachedData) {
+      return cachedData;
+    }
+    
+    // Apply rate limiting
+    await this.rateLimit();
+    
     // Ensure the sheet exists before trying to read
     await this.ensureSheetExists(sheetName);
     
     try {
-      const response = await this.sheets.spreadsheets.values.get({
-        spreadsheetId: this.spreadsheetId,
-        range: `${sheetName}!${range}`
+      const data = await this.retryWithBackoff(async () => {
+        const response = await this.sheets.spreadsheets.values.get({
+          spreadsheetId: this.spreadsheetId,
+          range: `${sheetName}!${range}`
+        });
+        return response.data.values || [];
       });
-
-      return response.data.values || [];
+      
+      // Cache the data
+      this.setCachedData(sheetName, data);
+      
+      return data;
     } catch (error) {
       console.error('Error reading from Google Sheets:', error);
       throw new GoogleSheetsError('Failed to read from Google Sheets', error);
@@ -204,13 +330,43 @@ class GoogleSheetsService {
     }
   }
 
+  // Batch update multiple rows at once (more efficient for rebuilding sheets)
+  async batchUpdateRows(sheetName, rows) {
+    await this.ensureInitialized();
+    try {
+      // Clear the sheet first (except headers)
+      await this.clearSheet(sheetName);
+      
+      // Add all rows in batch
+      if (rows.length > 0) {
+        const response = await this.sheets.spreadsheets.values.update({
+          spreadsheetId: this.spreadsheetId,
+          range: `${sheetName}!A2:C${rows.length + 1}`, // Start from row 2 (after headers), include Scanned By column
+          valueInputOption: 'USER_ENTERED',
+          resource: {
+            values: rows
+          }
+        });
+        
+        return { success: true, updatedCells: response.data.updatedCells };
+      }
+      
+      return { success: true, updatedCells: 0 };
+    } catch (error) {
+      console.error(`❌ Error batch updating rows in ${sheetName}:`, error);
+      throw new GoogleSheetsError(`Failed to batch update rows in Google Sheets: ${error.message}`);
+    }
+  }
+
   async updateRow(sheetName, rowNumber, values) {
     await this.ensureInitialized();
+    
+    // Apply rate limiting
+    await this.rateLimit();
+    
     try {
       // Ensure all values are strings to avoid type issues
       const stringValues = values.map(value => value !== null && value !== undefined ? value.toString() : '');
-      
-      console.log(`📝 Updating row ${rowNumber} in ${sheetName}:`, stringValues);
       
       const response = await this.sheets.spreadsheets.values.update({
         spreadsheetId: this.spreadsheetId,
@@ -221,7 +377,9 @@ class GoogleSheetsService {
         }
       });
 
-      console.log(`✅ Successfully updated row ${rowNumber} in ${sheetName}`);
+      // Clear cache since data has changed
+      this.clearCache(sheetName);
+      
       return { success: true, updatedCells: response.data.updatedCells };
     } catch (error) {
       console.error(`❌ Error updating row ${rowNumber} in ${sheetName}:`, error);

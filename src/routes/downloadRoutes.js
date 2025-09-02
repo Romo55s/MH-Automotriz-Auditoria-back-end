@@ -29,6 +29,12 @@ router.get('/inventory/:agency/:month/:year/csv', asyncHandler(async (req, res) 
   res.sendFile(fileInfo.filepath, (err) => {
     if (err) {
       console.error('Error sending file:', err);
+    } else {
+      // Clear agency sheet data after successful download
+      inventoryService.clearAgencyDataAfterDownload(agency, month, year, inventoryData.sessionId)
+        .catch((error) => {
+          console.error('❌ Failed to clear agency sheet data:', error);
+        });
     }
     // Cleanup temporary file after sending
     downloadService.cleanupFile(fileInfo.filepath);
@@ -59,6 +65,12 @@ router.get('/inventory/:agency/:month/:year/excel', asyncHandler(async (req, res
   res.sendFile(fileInfo.filepath, (err) => {
     if (err) {
       console.error('Error sending file:', err);
+    } else {
+      // Clear agency sheet data after successful download
+      inventoryService.clearAgencyDataAfterDownload(agency, month, year, inventoryData.sessionId)
+        .catch((error) => {
+          console.error('❌ Failed to clear agency sheet data:', error);
+        });
     }
     // Cleanup temporary file after sending
     downloadService.cleanupFile(fileInfo.filepath);

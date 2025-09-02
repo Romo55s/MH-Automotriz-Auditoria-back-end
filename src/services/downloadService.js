@@ -23,25 +23,25 @@ class DownloadService {
       const filename = `${inventoryData.agency}_${inventoryData.month}_${inventoryData.year}_${timestamp}.csv`;
       const filepath = path.join(this.tempDir, filename);
 
+      console.log(`📊 Generating CSV with ${inventoryData.scans.length} scans`);
+
       const csvWriter = createCsvWriter({
         path: filepath,
         header: [
           { id: 'date', title: 'Date' },
           { id: 'barcode', title: 'Barcode' },
-          { id: 'agency', title: 'Agency' },
-          { id: 'month', title: 'Month' },
-          { id: 'year', title: 'Year' }
+          { id: 'scannedBy', title: 'Scanned By' }
         ]
       });
 
-      // Prepare data for CSV
+      // Prepare data for CSV - Date, Barcode, and Scanned By
       const csvData = inventoryData.scans.map(scan => ({
         date: scan.date,
         barcode: scan.barcode,
-        agency: inventoryData.agency,
-        month: inventoryData.month,
-        year: inventoryData.year
+        scannedBy: scan.scannedBy || ''
       }));
+
+      console.log(`📊 CSV data prepared:`, csvData.slice(0, 3)); // Log first 3 rows for debugging
 
       await csvWriter.writeRecords(csvData);
 
@@ -52,6 +52,7 @@ class DownloadService {
         type: 'csv'
       };
     } catch (error) {
+      console.error(`❌ CSV generation error:`, error);
       throw new GoogleSheetsError(`Failed to generate CSV: ${error.message}`);
     }
   }
@@ -63,22 +64,24 @@ class DownloadService {
       const filename = `${inventoryData.agency}_${inventoryData.month}_${inventoryData.year}_${timestamp}.xlsx`;
       const filepath = path.join(this.tempDir, filename);
 
+      console.log(`📊 Generating Excel with ${inventoryData.scans.length} scans`);
+
       // Create workbook
       const workbook = XLSX.utils.book_new();
 
-      // Prepare data for Excel
+      // Prepare data for Excel - Date, Barcode, and Scanned By
       const excelData = [
         // Header row
-        ['Date', 'Barcode', 'Agency', 'Month', 'Year'],
+        ['Date', 'Barcode', 'Scanned By'],
         // Data rows
         ...inventoryData.scans.map(scan => [
           scan.date,
           scan.barcode,
-          inventoryData.agency,
-          inventoryData.month,
-          inventoryData.year
+          scan.scannedBy || ''
         ])
       ];
+
+      console.log(`📊 Excel data prepared:`, excelData.slice(0, 4)); // Log first 4 rows for debugging
 
       // Create worksheet
       const worksheet = XLSX.utils.aoa_to_sheet(excelData);
@@ -89,6 +92,8 @@ class DownloadService {
       // Write file
       XLSX.writeFile(workbook, filepath);
 
+      console.log(`✅ Excel file generated: ${filepath}`);
+
       return {
         filename,
         filepath,
@@ -96,6 +101,7 @@ class DownloadService {
         type: 'excel'
       };
     } catch (error) {
+      console.error(`❌ Excel generation error:`, error);
       throw new GoogleSheetsError(`Failed to generate Excel file: ${error.message}`);
     }
   }

@@ -54,43 +54,39 @@ class InventoryService {
       // Ensure Monthly Summary sheet exists
       await googleSheets.ensureSheetExists(this.summarySheetName);
       
-      const summaryData = await googleSheets.getSheetData(this.summarySheetName);
+      // Get all inventories for this agency/month/year using the new function
+      const currentMonthInventories = await this.getAllMonthlyInventories(agency, month, year);
       
-      // Filter for the specific agency and month/year
-      const agencyInventories = summaryData.filter(row => {
-        if (row.length < 3) return false;
-        return row[2] === agency; // Agency column
-      });
-      
-      // Count inventories for this month/year
-      const currentMonthInventories = agencyInventories.filter(row => {
-        return row[0] === this.getMonthName(month) && row[1] === year.toString();
-      });
-      
-      // Count active inventories across all months for this agency
-      const activeInventories = agencyInventories.filter(row => {
-        return row[3] === 'Active'; // Status column
+      // Count active inventories for this specific month/year
+      const activeInventoriesThisMonth = currentMonthInventories.filter(inv => {
+        return inv.status === 'Active';
       });
       
       console.log(`📊 Current month inventories: ${currentMonthInventories.length}/2`);
-      console.log(`📊 Active inventories: ${activeInventories.length}/1`);
+      console.log(`📊 Active inventories this month: ${activeInventoriesThisMonth.length}/1`);
       
-      // Check monthly limit (2 per month)
+      // FIRST: Check if there's already an active inventory for this specific month/year
+      // If there is, allow adding scans to it (multiple users can scan to same inventory)
+      if (activeInventoriesThisMonth.length >= 1) {
+        console.log(`✅ Found active inventory for this month - allowing scans to be added`);
+        return {
+          canStart: true,
+          currentMonthCount: currentMonthInventories.length,
+          activeCount: activeInventoriesThisMonth.length,
+          message: 'Adding scans to existing active inventory'
+        };
+      }
+      
+      // SECOND: Check monthly limit (2 per month) - only if no active inventory exists
       if (currentMonthInventories.length >= 2) {
         throw new ValidationError(`Monthly inventory limit reached for ${agency}. Maximum 2 inventories per month allowed.`);
       }
       
-      // Check active inventory limit (1 at a time)
-      if (activeInventories.length >= 1) {
-        const activeInventory = activeInventories[0];
-        throw new ValidationError(`Another inventory is already active for ${agency} (${activeInventory[0]} ${activeInventory[1]}). Only one inventory can be active at a time.`);
-      }
-      
-      console.log(`✅ Inventory limits check passed`);
+      console.log(`✅ No active inventory for this month - can start new inventory`);
       return {
         canStart: true,
         currentMonthCount: currentMonthInventories.length,
-        activeCount: activeInventories.length
+        activeCount: activeInventoriesThisMonth.length
       };
     } catch (error) {
       if (error instanceof ValidationError) {
@@ -139,8 +135,8 @@ class InventoryService {
       await googleSheets.ensureSheetExists(this.summarySheetName);
       console.log(`✅ MonthlySummary sheet ensured`);
 
-      // Check if monthly inventory is already completed
-      console.log(`🔍 Checking if monthly inventory is already completed...`);
+      // Check inventory limits and existing inventories
+      console.log(`🔍 Checking inventory limits and existing inventories...`);
       const existingSummary = await this.getMonthlySummary(scanData.agency, month, year);
       console.log(`📊 Existing summary found:`, existingSummary ? 'YES' : 'NO');
       if (existingSummary) {
@@ -149,8 +145,23 @@ class InventoryService {
         console.log(`   Session ID: ${existingSummary.sessionId}`);
       }
       
-      if (existingSummary && existingSummary.status === 'Completed') {
-        throw new ValidationError(`Monthly inventory for ${scanData.agency} - ${this.getMonthName(month)} ${scanData.year} is already completed`);
+      // Check inventory limits (2 per month, 1 active at a time)
+      console.log(`🔍 Checking inventory limits...`);
+      const limitsCheck = await this.checkInventoryLimits(scanData.agency, month, year);
+      console.log(`📊 Limits check result:`, limitsCheck);
+      
+      // If there's an active inventory, we can add scans to it
+      if (existingSummary && existingSummary.status === 'Active') {
+        console.log(`✅ Found active inventory - adding scan to existing inventory`);
+      } else if (existingSummary && existingSummary.status === 'Completed') {
+        console.log(`📋 Found completed inventory - checking if we can start a new one`);
+        // The checkInventoryLimits function will handle the logic for starting a new inventory
+        if (!limitsCheck.canStart) {
+          throw new ValidationError(`Cannot start new inventory: ${limitsCheck.message || 'Monthly limit reached'}`);
+        }
+        console.log(`✅ Can start new inventory - proceeding with scan`);
+      } else {
+        console.log(`📋 No existing inventory - starting new one`);
       }
 
       // Check for duplicate barcode in current month
@@ -167,7 +178,7 @@ class InventoryService {
         day: 'numeric', 
         year: 'numeric' 
       });
-      const values = [scanDate, scanData.code];
+      const values = [scanDate, scanData.code, scanData.user];
       
       console.log(`📱 Saving scan to agency sheet: ${scanData.agency}`);
       console.log(`   Values: [${values.join(', ')}]`);
@@ -247,7 +258,7 @@ class InventoryService {
       
       // Update the scan count in the summary - use the atomic update method
       console.log(`🔧 === UPDATING SCAN COUNT ===`);
-      await this.updateMonthlySummaryScanCount(scanData.agency, month, year, newScanCount);
+      await this.updateMonthlySummaryScanCount(scanData.agency, month, year, newScanCount, summary.sessionId);
       console.log(`✅ Scan count updated successfully`);
 
       // FINAL: Check final state of MonthlySummary sheet
@@ -376,11 +387,14 @@ class InventoryService {
       await this.updateMonthlySummaryStatus(
         agency, month, year, 'Completed', 
         new Date().toISOString(), 
-        totalScans
+        totalScans,
+        summary.sessionId,
+        user
       );
 
-      // Clear agency sheet for next month (monthly reset)
-      await googleSheets.clearSheet(agency);
+      // Note: Agency sheet is NOT cleared to allow downloads after completion
+      // The sheet will be cleared when starting a new inventory for the next month
+      console.log(`📋 Agency sheet preserved for download access`);
 
       return {
         success: true,
@@ -422,7 +436,8 @@ class InventoryService {
         totalScans: monthScans.length,
         scans: monthScans.map(row => ({
           date: row[0],
-          barcode: row[1]
+          barcode: row[1],
+          scannedBy: row[2] || ''
         }))
       };
     } catch (error) {
@@ -461,51 +476,76 @@ class InventoryService {
     }
   }
 
-  // Check if monthly inventory exists and its status
+  // Check if monthly inventory exists and its status (supports multiple inventories per month)
   async checkMonthlyInventory(agency, month, year) {
     try {
+      console.log(`\n🔍 === CHECK MONTHLY INVENTORY ===`);
+      console.log(`📋 Checking: ${agency} - ${this.getMonthName(month)} ${year}`);
+      
       // Ensure Monthly Summary sheet exists
       await googleSheets.ensureSheetExists(this.summarySheetName);
       
-      const summary = await this.getMonthlySummary(agency, month, year);
+      // Get all inventories for this agency/month/year
+      const inventories = await this.getAllMonthlyInventories(agency, month, year);
       
-      if (!summary) {
+      if (inventories.length === 0) {
         return {
           exists: false,
           status: 'Not Started',
+          totalInventories: 0,
+          activeInventories: 0,
+          completedInventories: 0,
           message: `No inventory found for ${agency} - ${this.getMonthName(month)} ${year}`
         };
       }
 
+      // Count by status
+      const activeInventories = inventories.filter(inv => inv.status === 'Active');
+      const completedInventories = inventories.filter(inv => inv.status === 'Completed');
+      
+      // Get the most recent inventory (last one in the list)
+      const latestInventory = inventories[inventories.length - 1];
+      
+      console.log(`📊 Found ${inventories.length} inventories:`, {
+        active: activeInventories.length,
+        completed: completedInventories.length,
+        latest: latestInventory.status
+      });
+
       return {
         exists: true,
-        status: summary.status,
-        totalScans: summary.totalScans,
-        createdAt: summary.createdAt,
-        completedAt: summary.completedAt,
-        message: `Inventory ${summary.status.toLowerCase()} for ${agency} - ${this.getMonthName(month)} ${year}`
+        status: latestInventory.status,
+        totalScans: latestInventory.totalScans,
+        createdAt: latestInventory.createdAt,
+        completedAt: latestInventory.completedAt,
+        totalInventories: inventories.length,
+        activeInventories: activeInventories.length,
+        completedInventories: completedInventories.length,
+        inventories: inventories, // Include all inventories for detailed view
+        message: `Found ${inventories.length} inventory(ies) for ${agency} - ${this.getMonthName(month)} ${year}. Latest: ${latestInventory.status.toLowerCase()}`
       };
     } catch (error) {
+      console.error(`❌ Error checking monthly inventory:`, error);
       throw new GoogleSheetsError(`Failed to check monthly inventory: ${error.message}`);
     }
   }
 
-  // Get monthly summary for an agency/month/year
-  async getMonthlySummary(agency, month, year) {
+  // Get all monthly inventories for an agency/month/year (supports multiple inventories per month)
+  async getAllMonthlyInventories(agency, month, year) {
     try {
       const data = await googleSheets.getSheetData(this.summarySheetName);
       
-      // Find the specific monthly summary
-      const summary = data.find(row => {
+      // Find all monthly summaries for this agency/month/year
+      const summaries = data.filter(row => {
         if (row.length < 3) return false;
         return row[0] === this.getMonthName(month) && 
                row[1] === year.toString() && 
                row[2] === agency;
       });
 
-      if (!summary) return null;
+      if (summaries.length === 0) return [];
 
-      return {
+      return summaries.map(summary => ({
         month: summary[0],           // Month (1st column)
         year: summary[1],            // Year (2nd column)
         agency: summary[2],          // Agency (3rd column)
@@ -515,19 +555,43 @@ class InventoryService {
         userName: summary[6],        // User Name (7th column)
         totalScans: parseInt(summary[7]) || 0, // Total Scans (8th column)
         sessionId: summary[8],       // Session ID (9th column)
-        completedAt: summary[9]      // Completed At (10th column)
-      };
+        completedAt: summary[9],     // Completed At (10th column)
+        finishedBy: summary[10] || '' // Finished By (11th column)
+      }));
+    } catch (error) {
+      throw new GoogleSheetsError(`Failed to get all monthly inventories: ${error.message}`);
+    }
+  }
+
+  // Get monthly summary for an agency/month/year (returns the most recent one for backward compatibility)
+  async getMonthlySummary(agency, month, year) {
+    try {
+      const inventories = await this.getAllMonthlyInventories(agency, month, year);
+      
+      if (inventories.length === 0) return null;
+      
+      // Return the active inventory if it exists, otherwise the most recent one
+      const activeInventory = inventories.find(inv => inv.status === 'Active');
+      if (activeInventory) {
+        return activeInventory;
+      }
+      
+      // If no active inventory, return the most recent one
+      return inventories[inventories.length - 1];
     } catch (error) {
       throw new GoogleSheetsError(`Failed to get monthly summary: ${error.message}`);
     }
   }
 
   // Update monthly summary scan count only
-  async updateMonthlySummaryScanCount(agency, month, year, newScanCount) {
+  async updateMonthlySummaryScanCount(agency, month, year, newScanCount, sessionId = null) {
     try {
       console.log(`\n🔧 === UPDATE MONTHLY SUMMARY SCAN COUNT START ===`);
       console.log(`📋 Updating scan count for: ${agency} - ${this.getMonthName(month)} ${year}`);
       console.log(`📊 New scan count: ${newScanCount}`);
+      if (sessionId) {
+        console.log(`🔑 Session ID: ${sessionId}`);
+      }
       
       const data = await googleSheets.getSheetData(this.summarySheetName);
       console.log(`📊 Current MonthlySummary data rows: ${data.length}`);
@@ -540,9 +604,12 @@ class InventoryService {
         const yearMatch = row[1] === year.toString();
         const agencyMatch = row[2] === agency;
         
-        console.log(`   Row [${row.join(', ')}]: monthMatch=${monthMatch}, yearMatch=${yearMatch}, agencyMatch=${agencyMatch}`);
+        // If sessionId is provided, also match the session ID (column 8)
+        const sessionMatch = sessionId ? row[8] === sessionId : true;
         
-        return monthMatch && yearMatch && agencyMatch;
+        console.log(`   Row [${row.join(', ')}]: monthMatch=${monthMatch}, yearMatch=${yearMatch}, agencyMatch=${agencyMatch}, sessionMatch=${sessionMatch}`);
+        
+        return monthMatch && yearMatch && agencyMatch && sessionMatch;
       });
 
       console.log(`🔍 Row index found: ${rowIndex}`);
@@ -582,31 +649,59 @@ class InventoryService {
       console.log(`\n🔍 === FIND OR CREATE MONTHLY SUMMARY START ===`);
       console.log(`📋 Looking for: ${agency} - ${this.getMonthName(month)} ${year}`);
       
-      // First, try to find existing summary
-      console.log(`🔍 Step 1: Checking for existing summary...`);
-      const existingSummary = await this.getMonthlySummary(agency, month, year);
+      // First, check all existing inventories for this agency/month/year
+      console.log(`🔍 Step 1: Checking for existing inventories...`);
+      const allInventories = await this.getAllMonthlyInventories(agency, month, year);
       
-      if (existingSummary) {
-        console.log(`✅ Found existing monthly summary for ${agency} - ${this.getMonthName(month)} ${year}`);
-        console.log(`   Details:`, {
-          month: existingSummary.month,
-          year: existingSummary.year,
-          agency: existingSummary.agency,
-          status: existingSummary.status,
-          totalScans: existingSummary.totalScans,
-          sessionId: existingSummary.sessionId
+      if (allInventories.length > 0) {
+        console.log(`📊 Found ${allInventories.length} existing inventory(ies):`);
+        allInventories.forEach((inv, idx) => {
+          console.log(`   Inventory ${idx + 1}: Status=${inv.status}, Scans=${inv.totalScans}, Session=${inv.sessionId}`);
         });
-        console.log(`🏁 === FIND OR CREATE COMPLETE (EXISTING) ===\n`);
-        return existingSummary;
+        
+        // Look for an active inventory first
+        const activeInventory = allInventories.find(inv => inv.status === 'Active');
+        
+        if (activeInventory) {
+          console.log(`✅ Found active inventory - will add scan to existing active inventory`);
+          console.log(`   Details:`, {
+            month: activeInventory.month,
+            year: activeInventory.year,
+            agency: activeInventory.agency,
+            status: activeInventory.status,
+            totalScans: activeInventory.totalScans,
+            sessionId: activeInventory.sessionId
+          });
+          console.log(`🏁 === FIND OR CREATE COMPLETE (EXISTING ACTIVE) ===\n`);
+          return activeInventory;
+        } else {
+          console.log(`📋 No active inventory found - all existing inventories are completed`);
+          console.log(`🔍 Checking if we can create a new inventory (limit: 2 per month)...`);
+          
+          if (allInventories.length >= 2) {
+            throw new ValidationError(`Monthly inventory limit reached for ${agency}. Maximum 2 inventories per month allowed.`);
+          }
+          
+          console.log(`✅ Can create new inventory (${allInventories.length}/2 used)`);
+          // Continue to create new inventory below
+        }
+      } else {
+        console.log(`📋 No existing inventories found - will create first inventory`);
+        // Continue to create new inventory below
       }
       
-      // If no existing summary, create one
-      console.log(`📝 Step 2: No existing summary found, creating new one...`);
+      // Create new inventory (either first inventory or additional inventory)
+      console.log(`📝 Step 2: Creating new inventory...`);
       console.log(`   Agency: ${agency}`);
       console.log(`   Month: ${this.getMonthName(month)} (${month})`);
       console.log(`   Year: ${year}`);
       console.log(`   User: ${user}`);
       console.log(`   UserName: ${userName || user}`);
+      
+      // Note: We do NOT clear the agency sheet when creating a new inventory
+      // This preserves data from previous inventories for download purposes
+      // The agency sheet will accumulate data from all inventories in the same month
+      console.log(`📋 Preserving agency sheet data for download access`);
       
       const sessionId = `sess_${Date.now()}`;
       console.log(`   Generated Session ID: ${sessionId}`);
@@ -621,7 +716,8 @@ class InventoryService {
          userName || user,                   // User Name
          '0',                                // Total Scans ← Start with 0, not 1
          sessionId,                          // Session ID
-         ''                                  // Completed At
+         '',                                 // Completed At
+         ''                                  // Finished By
        ];
       
       console.log(`   Values to append: [${values.join(', ')}]`);
@@ -745,16 +841,21 @@ class InventoryService {
   }
 
   // Update monthly summary status
-  async updateMonthlySummaryStatus(agency, month, year, status, completedAt, totalScans) {
+  async updateMonthlySummaryStatus(agency, month, year, status, completedAt, totalScans, sessionId = null, finishedBy = null) {
     try {
       const data = await googleSheets.getSheetData(this.summarySheetName);
       
       // Find the row to update
       const rowIndex = data.findIndex(row => {
         if (row.length < 3) return false;
-        return row[0] === this.getMonthName(month) && 
-               row[1] === year.toString() && 
-               row[2] === agency;
+        const monthMatch = row[0] === this.getMonthName(month);
+        const yearMatch = row[1] === year.toString();
+        const agencyMatch = row[2] === agency;
+        
+        // If sessionId is provided, also match the session ID (column 8)
+        const sessionMatch = sessionId ? row[8] === sessionId : true;
+        
+        return monthMatch && yearMatch && agencyMatch && sessionMatch;
       });
 
       if (rowIndex !== -1) {
@@ -764,8 +865,9 @@ class InventoryService {
         
         // Update the specific fields
         updatedRow[3] = status;                    // Status (4th column)
-        updatedRow[7] = totalScans.toString();     // Total Scans (8th column)
-        updatedRow[9] = this.formatDate(completedAt); // Completed At (10th column)
+        updatedRow[7] = (totalScans || 0).toString(); // Total Scans (8th column)
+        updatedRow[9] = completedAt ? this.formatDate(completedAt) : ''; // Completed At (10th column)
+        updatedRow[10] = finishedBy || '';         // Finished By (11th column)
         
         // Ensure all required fields are present
         for (let i = 0; i < updatedRow.length; i++) {
@@ -1159,9 +1261,22 @@ class InventoryService {
       const deletedRow = data[rowIndex];
       const deletedDate = deletedRow[0];
 
-      // Delete the row by clearing it
-      await googleSheets.clearRow(agency, rowIndex + 1);
-      console.log(`✅ Successfully deleted row ${rowIndex + 1} from ${agency} sheet`);
+      console.log(`🔍 Found entry at row ${rowIndex + 1}: ${deletedDate} - ${barcode}`);
+
+      // Create new data array without the deleted row
+      const newData = data.filter((row, index) => index !== rowIndex);
+      
+      console.log(`📊 Original rows: ${data.length}, New rows: ${newData.length}`);
+
+      // Prepare rows for batch update (skip header row)
+      const rowsToUpdate = newData.slice(1).filter(row => 
+        row.length >= 2 && row[0] && row[1]
+      ).map(row => [row[0], row[1]]);
+
+      // Use batch update for better performance
+      await googleSheets.batchUpdateRows(agency, rowsToUpdate);
+
+      console.log(`✅ Successfully deleted row and rebuilt sheet without gaps`);
 
       // Find which month/year this entry belongs to for updating summary
       const scanDate = new Date(deletedDate);
@@ -1198,44 +1313,255 @@ class InventoryService {
     }
   }
 
+  async deleteMultipleScannedEntries(agency, barcodes) {
+    try {
+      console.log(`\n🗑️ === DELETE MULTIPLE SCANNED ENTRIES START ===`);
+      console.log(`📋 Deleting ${barcodes.length} entries for ${agency}:`, barcodes);
+      
+      // Validate input
+      if (!agency || !barcodes || !Array.isArray(barcodes) || barcodes.length === 0) {
+        throw new ValidationError('Missing required fields: agency, barcodes (non-empty array)');
+      }
+
+      // Get current data from agency sheet
+      const data = await googleSheets.getSheetData(agency);
+      
+      // Find all rows to delete (matching barcodes)
+      const deletedEntries = [];
+      const newData = data.filter((row, index) => {
+        if (row.length < 2) return true; // Keep rows with insufficient data
+        
+        const barcode = row[1];
+        if (barcodes.includes(barcode)) {
+          deletedEntries.push({
+            date: row[0],
+            barcode: barcode,
+            scannedBy: row[2] || ''
+          });
+          console.log(`🔍 Found entry at row ${index + 1}: ${row[0]} - ${barcode}`);
+          return false; // Remove this row
+        }
+        return true; // Keep this row
+      });
+
+      if (deletedEntries.length === 0) {
+        throw new ValidationError(`No scanned entries found for the provided barcodes: ${barcodes.join(', ')}`);
+      }
+
+      console.log(`📊 Original data rows: ${data.length}, New data rows: ${newData.length}`);
+      console.log(`🗑️ Deleted ${deletedEntries.length} out of ${barcodes.length} requested entries`);
+
+      // Prepare rows for batch update (skip header row)
+      const rowsToUpdate = newData.slice(1).filter(row => 
+        row.length >= 2 && row[0] && row[1]
+      ).map(row => [row[0], row[1], row[2] || '']); // Include scannedBy column
+
+      // Use batch update for better performance
+      await googleSheets.batchUpdateRows(agency, rowsToUpdate);
+      console.log(`✅ Successfully deleted ${deletedEntries.length} entries and rebuilt sheet without gaps`);
+
+      // Update the monthly summary scan count for each deleted entry
+      const monthYearCounts = {};
+      deletedEntries.forEach(entry => {
+        const scanDate = new Date(entry.date);
+        const month = (scanDate.getMonth() + 1).toString();
+        const year = scanDate.getFullYear().toString();
+        const key = `${month}-${year}`;
+        monthYearCounts[key] = (monthYearCounts[key] || 0) + 1;
+      });
+
+      // Update scan counts for each affected month/year
+      for (const [monthYear, count] of Object.entries(monthYearCounts)) {
+        const [month, year] = monthYear.split('-');
+        const summary = await this.getMonthlySummary(agency, month, year);
+        if (summary) {
+          const newScanCount = Math.max(0, summary.totalScans - count);
+          await this.updateMonthlySummaryScanCount(agency, month, year, newScanCount);
+          console.log(`✅ Updated scan count for ${this.getMonthName(month)} ${year}: ${summary.totalScans} → ${newScanCount} (deleted ${count} entries)`);
+        }
+      }
+
+      console.log(`🏁 === DELETE MULTIPLE SCANNED ENTRIES COMPLETE ===\n`);
+      
+      return {
+        success: true,
+        message: `Successfully deleted ${deletedEntries.length} out of ${barcodes.length} scanned entries`,
+        deletedEntries: deletedEntries,
+        notFound: barcodes.filter(barcode => !deletedEntries.some(entry => entry.barcode === barcode)),
+        remainingScans: newData.length - 1 // Subtract 1 for header row
+      };
+
+    } catch (error) {
+      console.error(`❌ Error deleting multiple scanned entries:`, error);
+      if (error instanceof ValidationError || error instanceof GoogleSheetsError) {
+        throw error;
+      }
+      throw new GoogleSheetsError(`Failed to delete multiple scanned entries: ${error.message}`);
+    }
+  }
+
+  /**
+   * Check if inventory was completed (which would terminate all active sessions)
+   */
+  async checkInventoryCompletion(agency, month, year) {
+    try {
+      const inventories = await this.getAllMonthlyInventories(agency, month, year);
+      
+      if (inventories.length === 0) {
+        return {
+          completed: false,
+          hasActiveInventory: false,
+          completedInventories: 0,
+          totalInventories: 0,
+          message: 'No inventories found for this month'
+        };
+      }
+      
+      const activeInventories = inventories.filter(inv => inv.status === 'Active');
+      const completedInventories = inventories.filter(inv => inv.status === 'Completed');
+      
+      const isCompleted = completedInventories.length > 0;
+      const hasActiveInventory = activeInventories.length > 0;
+      
+      return {
+        completed: isCompleted,
+        hasActiveInventory: hasActiveInventory,
+        completedInventories: completedInventories.length,
+        totalInventories: inventories.length,
+        activeInventories: activeInventories.length,
+        message: isCompleted 
+          ? `Inventory completed. ${completedInventories.length} completed, ${activeInventories.length} active.`
+          : `Inventory not completed. ${activeInventories.length} active, ${completedInventories.length} completed.`
+      };
+    } catch (error) {
+      console.error(`❌ Error checking inventory completion:`, error);
+      throw new GoogleSheetsError(`Failed to check inventory completion: ${error.message}`);
+    }
+  }
+
+  /**
+   * Clear agency sheet data after successful download
+   * This keeps the inventory status as "Completed" but cleans the agency sheet
+   * and preserves the total scan count in MonthlySummary
+   */
+  async clearAgencyDataAfterDownload(agency, month, year, sessionId) {
+    try {
+      // Get current scan count before clearing
+      const summary = await this.getMonthlySummary(agency, month, year);
+      const currentScanCount = summary ? summary.totalScans : 0;
+      
+      // Clear the agency sheet data (keeps headers, removes all scan data)
+      await googleSheets.clearSheet(agency);
+      
+      // Update MonthlySummary to ensure scan count is preserved
+      if (summary && sessionId) {
+        // Only update the scan count, preserve the original completedAt date
+        await this.updateMonthlySummaryScanCount(agency, month, year, currentScanCount, sessionId);
+      }
+      
+      return {
+        success: true,
+        message: 'Agency sheet data cleared successfully',
+        preservedScanCount: currentScanCount
+      };
+    } catch (error) {
+      console.error(`❌ Error clearing agency sheet data:`, error);
+      throw new GoogleSheetsError(`Failed to clear agency sheet data: ${error.message}`);
+    }
+  }
+
   // Get inventory data for download
   async getInventoryDataForDownload(agency, month, year) {
     try {
       console.log(`\n📊 === GET INVENTORY DATA FOR DOWNLOAD ===`);
       console.log(`📋 Getting data for: ${agency} - ${this.getMonthName(month)} ${year}`);
       
-      // Get monthly summary
-      const summary = await this.getMonthlySummary(agency, month, year);
-      if (!summary) {
+      // Get all inventories for this agency/month/year
+      const allInventories = await this.getAllMonthlyInventories(agency, month, year);
+      if (allInventories.length === 0) {
         throw new ValidationError(`No inventory found for ${agency} - ${this.getMonthName(month)} ${year}`);
       }
 
-      // Get all scanned data from agency sheet
-      const data = await googleSheets.getSheetData(agency);
-      
-      // Filter scans for the specific month/year
-      const monthScans = data.filter(row => {
-        if (row.length < 2) return false;
-        const scanDate = new Date(row[0]);
-        return scanDate.getMonth() === parseInt(month) - 1 && scanDate.getFullYear() === parseInt(year);
+      // Find the most recent completed inventory for download
+      const completedInventories = allInventories.filter(inv => inv.status === 'Completed');
+      if (completedInventories.length === 0) {
+        throw new ValidationError(`No completed inventory found for ${agency} - ${this.getMonthName(month)} ${year}. Only completed inventories can be downloaded.`);
+      }
+
+      // Get the most recent completed inventory
+      const summary = completedInventories[completedInventories.length - 1];
+
+      console.log(`📊 Found ${completedInventories.length} completed inventory(ies), using most recent:`, {
+        totalScans: summary.totalScans,
+        status: summary.status,
+        sessionId: summary.sessionId
       });
 
-      console.log(`📊 Found ${monthScans.length} scans for download`);
+      // Get all scanned data from agency sheet
+      const data = await googleSheets.getSheetData(agency);
+      console.log(`📊 Total rows in agency sheet: ${data.length}`);
+      
+      // Filter scans for the specific month/year with better date parsing
+      const monthScans = data.filter(row => {
+        if (row.length < 2 || !row[0] || !row[1]) return false;
+        
+        try {
+          // Try different date formats
+          let scanDate;
+          const dateStr = row[0].toString().trim();
+          
+          // Handle different date formats
+          if (dateStr.includes('Sep')) {
+            // Format: "Sep 2, 2025"
+            scanDate = new Date(dateStr);
+          } else {
+            // Try standard date parsing
+            scanDate = new Date(dateStr);
+          }
+          
+          if (isNaN(scanDate.getTime())) {
+            console.log(`⚠️ Invalid date format: ${dateStr}`);
+            return false;
+          }
+          
+          const targetMonth = parseInt(month) - 1; // JavaScript months are 0-based
+          const targetYear = parseInt(year);
+          
+          const matches = scanDate.getMonth() === targetMonth && scanDate.getFullYear() === targetYear;
+          
+          if (matches) {
+            console.log(`✅ Match found: ${dateStr} -> ${scanDate.toDateString()}`);
+          }
+          
+          return matches;
+        } catch (error) {
+          console.log(`⚠️ Error parsing date: ${row[0]}`, error.message);
+          return false;
+        }
+      });
+
+      console.log(`📊 Found ${monthScans.length} scans for download (expected: ${summary.totalScans})`);
+
+      // Use the actual count from monthly summary as the authoritative source
+      const totalScans = summary.totalScans || monthScans.length;
 
       return {
         agency,
         month: this.getMonthName(month),
         year,
-        totalScans: monthScans.length,
+        totalScans: totalScans, // Use monthly summary count
         status: summary.status,
         createdAt: summary.createdAt,
         completedAt: summary.completedAt,
+        sessionId: summary.sessionId, // Include sessionId for download tracking
         scans: monthScans.map(row => ({
           date: row[0],
-          barcode: row[1]
+          barcode: row[1],
+          scannedBy: row[2] || ''
         }))
       };
     } catch (error) {
+      console.error(`❌ Error in getInventoryDataForDownload:`, error);
       if (error instanceof ValidationError || error instanceof GoogleSheetsError) {
         throw error;
       }

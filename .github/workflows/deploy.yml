@@ -1,0 +1,98 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: npm ci
+    
+    - name: Run tests (if available)
+      run: npm test --if-present
+    
+    - name: Lint code
+      run: npm run lint --if-present
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Deploy to production server
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.PRODUCTION_HOST }}
+        username: ${{ secrets.PRODUCTION_USER }}
+        key: ${{ secrets.PRODUCTION_SSH_KEY }}
+        port: ${{ secrets.PRODUCTION_PORT || 22 }}
+        script: |
+          set -e
+          echo "🚀 Starting deployment..."
+          
+          # Navigate to application directory
+          cd /var/www/car-inventory-backend
+          
+          # Create backup
+          if [ -d ".git" ]; then
+            echo "📦 Creating backup..."
+            BACKUP_NAME="backup-$(date +%Y%m%d-%H%M%S)"
+            sudo cp -r /var/www/car-inventory-backend /var/backups/car-inventory-backend/$BACKUP_NAME
+            echo "✅ Backup created: $BACKUP_NAME"
+          fi
+          
+          # Pull latest changes
+          echo "📥 Pulling latest changes..."
+          git pull origin main
+          
+          # Install dependencies
+          echo "📦 Installing dependencies..."
+          npm ci --only=production
+          
+          # Restart application
+          echo "🔄 Restarting application..."
+          pm2 restart car-inventory-backend --env production
+          
+          # Wait for health check
+          echo "🏥 Performing health check..."
+          sleep 10
+          
+          if curl -f http://localhost:5000/health > /dev/null 2>&1; then
+            echo "✅ Health check passed - Deployment successful!"
+          else
+            echo "❌ Health check failed - Rolling back..."
+            # Rollback logic could be added here
+            exit 1
+          fi
+          
+          echo "🎉 Deployment completed successfully!"
+
+  notify:
+    needs: [test, deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Notify deployment status
+      run: |
+        if [ "${{ needs.deploy.result }}" == "success" ]; then
+          echo "✅ Production deployment successful!"
+        else
+          echo "❌ Production deployment failed!"
+        fi

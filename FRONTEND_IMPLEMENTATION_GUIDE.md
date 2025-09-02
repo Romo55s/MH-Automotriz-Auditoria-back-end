@@ -25,6 +25,7 @@ The API routes have been refactored into separate modules for better organizatio
 | `GET /api/duplicate-barcodes/:agency/:month/:year` | `GET /api/inventory/duplicate-barcodes/:agency/:month/:year` |
 | `GET /api/scan-count/:agency/:month/:year` | `GET /api/inventory/scan-count/:agency/:month/:year` |
 | `DELETE /api/delete-scanned-entry` | `DELETE /api/inventory/delete-scanned-entry` |
+| `DELETE /api/delete-multiple` | `DELETE /api/inventory/delete-multiple` |
 | `GET /api/inventory-data/:agency/:month/:year` | `GET /api/inventory/inventory-data/:agency/:month/:year` |
 | `GET /api/check-inventory-limits/:agency/:month/:year` | `GET /api/inventory/check-inventory-limits/:agency/:month/:year` |
 | `GET /api/download-inventory/:agency/:month/:year/csv` | `GET /api/download/inventory/:agency/:month/:year/csv` |
@@ -51,8 +52,9 @@ const response = await fetch('/api/validation/monthly-summary');
 
 ### 1. Inventory Session Enforcement
 - **Limit**: Maximum 2 inventories per month per agency
-- **Active Limit**: Only 1 active inventory at a time per agency
+- **Active Limit**: Only 1 active inventory per month per agency (multiple users can add scans to the same active inventory)
 - **Enforcement**: Automatically checked before starting new inventory sessions
+- **Multi-User Support**: Multiple users can scan barcodes to the same active inventory until it's completed
 
 ### 2. Delete Scanned Data
 - **Functionality**: Delete individual scanned entries from Google Sheets
@@ -153,9 +155,10 @@ const checkInventoryLimits = async (agency, month, year) => {
 ```
 
 #### UI Components Needed:
-- **Warning Messages**: Display when limits are reached
+- **Warning Messages**: Display when monthly limit is reached (2/2 inventories)
 - **Status Indicators**: Show current month count (e.g., "1/2 inventories this month")
-- **Active Inventory Alert**: Show if another inventory is already active
+- **Active Inventory Info**: Show current active inventory status and allow continued scanning
+- **Multi-User Support**: Allow multiple users to scan to the same active inventory
 
 ### 2. Delete Scanned Data UI
 
@@ -202,6 +205,72 @@ const deleteScannedEntry = async (agency, barcode) => {
 - **Confirmation Dialog**: "Are you sure?" confirmation
 - **Success/Error Messages**: Feedback for user actions
 - **Real-time Updates**: Remove deleted entries from the list immediately
+
+### 2.1. Multiple Delete Scanned Entries
+
+#### API Endpoint
+```javascript
+// Delete multiple scanned entries
+const deleteMultipleScannedEntries = async (data: {
+  agency: string;
+  barcodes: string[];
+}) => {
+  return apiRequest('/inventory/delete-multiple', {
+    method: 'DELETE',
+    body: JSON.stringify(data),
+  });
+};
+```
+
+#### Frontend Implementation
+```javascript
+// Delete multiple scanned entries
+const deleteMultipleEntries = async (agency, barcodes) => {
+  if (!confirm(`Are you sure you want to delete ${barcodes.length} scanned entries?`)) {
+    return;
+  }
+  
+  try {
+    const response = await fetch('/api/inventory/delete-multiple', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        agency,
+        barcodes
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      // Remove entries from UI
+      barcodes.forEach(barcode => removeEntryFromList(barcode));
+      // Update scan count
+      updateScanCount();
+      showSuccessMessage(`Successfully deleted ${result.deletedEntries.length} entries`);
+      
+      // Show info about any entries that weren't found
+      if (result.notFound && result.notFound.length > 0) {
+        showWarningMessage(`${result.notFound.length} entries were not found: ${result.notFound.join(', ')}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error deleting multiple entries:', error);
+    showErrorMessage('Failed to delete entries');
+  }
+};
+```
+
+#### UI Components Needed:
+- **Select All Checkbox**: Select/deselect all entries
+- **Individual Checkboxes**: Select specific entries to delete
+- **Bulk Delete Button**: Delete all selected entries
+- **Selection Counter**: Show "X entries selected"
+- **Confirmation Dialog**: "Are you sure you want to delete X entries?"
+- **Progress Indicator**: Show deletion progress for large batches
+- **Success/Error Messages**: Detailed feedback about deletion results
 
 ### 3. Download & Delete Inventory Data UI
 
@@ -262,8 +331,8 @@ const downloadInventory = async (agency, month, year, format) => {
    - UI: Show warning message, disable "Start Inventory" button
 
 2. **Active Inventory Exists**
-   - Error: "Another inventory is already active for {Agency}. Only one inventory can be active at a time."
-   - UI: Show current active inventory info, disable "Start Inventory" button
+   - Note: This is now allowed! Multiple users can add scans to the same active inventory
+   - UI: Show current active inventory info, allow users to continue scanning
 
 3. **Entry Not Found for Deletion**
    - Error: "Scanned entry not found: {barcode} for {Agency}"

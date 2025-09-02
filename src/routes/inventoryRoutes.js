@@ -121,6 +121,19 @@ router.delete('/delete-scanned-entry', asyncHandler(async (req, res) => {
   res.status(200).json(result);
 }));
 
+// DELETE /api/inventory/delete-multiple
+router.delete('/delete-multiple', asyncHandler(async (req, res) => {
+  const { agency, barcodes } = req.body;
+
+  // Validate required fields
+  if (!agency || !barcodes || !Array.isArray(barcodes) || barcodes.length === 0) {
+    throw new ValidationError('Missing required fields: agency, barcodes (non-empty array)');
+  }
+
+  const result = await inventoryService.deleteMultipleScannedEntries(agency, barcodes);
+  res.status(200).json(result);
+}));
+
 // GET /api/inventory/inventory-data/:agency/:month/:year
 router.get('/inventory-data/:agency/:month/:year', asyncHandler(async (req, res) => {
   const { agency, month, year } = req.params;
@@ -145,6 +158,23 @@ router.get('/check-inventory-limits/:agency/:month/:year', asyncHandler(async (r
 
   const result = await inventoryService.checkInventoryLimits(agency, month, year);
   res.status(200).json(result);
+}));
+
+// POST /api/inventory/check-completion
+router.post('/check-completion', asyncHandler(async (req, res) => {
+  const { agency, month, year } = req.body;
+  
+  if (!agency || !month || !year) {
+    throw new ValidationError('Missing required fields: agency, month, year');
+  }
+  
+  try {
+    const result = await inventoryService.checkInventoryCompletion(agency, month, year);
+    res.json(result);
+  } catch (error) {
+    console.error('Error checking inventory completion:', error);
+    throw error;
+  }
 }));
 
 module.exports = router;
