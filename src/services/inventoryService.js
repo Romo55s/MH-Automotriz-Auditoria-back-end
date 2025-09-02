@@ -45,6 +45,61 @@ class InventoryService {
     }
   }
 
+  // Check inventory session limits
+  async checkInventoryLimits(agency, month, year) {
+    try {
+      console.log(`\n🔍 === CHECKING INVENTORY LIMITS ===`);
+      console.log(`📋 Checking limits for: ${agency} - ${this.getMonthName(month)} ${year}`);
+      
+      // Ensure Monthly Summary sheet exists
+      await googleSheets.ensureSheetExists(this.summarySheetName);
+      
+      const summaryData = await googleSheets.getSheetData(this.summarySheetName);
+      
+      // Filter for the specific agency and month/year
+      const agencyInventories = summaryData.filter(row => {
+        if (row.length < 3) return false;
+        return row[2] === agency; // Agency column
+      });
+      
+      // Count inventories for this month/year
+      const currentMonthInventories = agencyInventories.filter(row => {
+        return row[0] === this.getMonthName(month) && row[1] === year.toString();
+      });
+      
+      // Count active inventories across all months for this agency
+      const activeInventories = agencyInventories.filter(row => {
+        return row[3] === 'Active'; // Status column
+      });
+      
+      console.log(`📊 Current month inventories: ${currentMonthInventories.length}/2`);
+      console.log(`📊 Active inventories: ${activeInventories.length}/1`);
+      
+      // Check monthly limit (2 per month)
+      if (currentMonthInventories.length >= 2) {
+        throw new ValidationError(`Monthly inventory limit reached for ${agency}. Maximum 2 inventories per month allowed.`);
+      }
+      
+      // Check active inventory limit (1 at a time)
+      if (activeInventories.length >= 1) {
+        const activeInventory = activeInventories[0];
+        throw new ValidationError(`Another inventory is already active for ${agency} (${activeInventory[0]} ${activeInventory[1]}). Only one inventory can be active at a time.`);
+      }
+      
+      console.log(`✅ Inventory limits check passed`);
+      return {
+        canStart: true,
+        currentMonthCount: currentMonthInventories.length,
+        activeCount: activeInventories.length
+      };
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        throw error;
+      }
+      throw new GoogleSheetsError(`Failed to check inventory limits: ${error.message}`);
+    }
+  }
+
   // Save a barcode scan
   async saveScan(scanData) {
     try {
@@ -73,6 +128,11 @@ class InventoryService {
       }
 
       console.log(`📅 Extracted month: ${month}, year: ${year} from timestamp: ${scanData.timestamp}`);
+
+      // Check inventory session limits before proceeding
+      console.log(`🔍 Checking inventory session limits...`);
+      await this.checkInventoryLimits(scanData.agency, month, year);
+      console.log(`✅ Inventory limits check passed`);
 
       // Ensure Monthly Summary sheet exists
       console.log(`📋 Ensuring MonthlySummary sheet exists...`);
@@ -1069,6 +1129,117 @@ class InventoryService {
       return duplicates;
     } catch (error) {
       throw new GoogleSheetsError(`Failed to get duplicate barcodes: ${error.message}`);
+    }
+  }
+
+  // Delete a specific scanned entry
+  async deleteScannedEntry(agency, barcode) {
+    try {
+      console.log(`\n🗑️ === DELETE SCANNED ENTRY START ===`);
+      console.log(`📋 Deleting entry: ${agency} - ${barcode}`);
+      
+      // Validate input
+      if (!agency || !barcode) {
+        throw new ValidationError('Missing required fields: agency, barcode');
+      }
+
+      // Get current data from agency sheet
+      const data = await googleSheets.getSheetData(agency);
+      
+      // Find the row to delete (matching barcode)
+      const rowIndex = data.findIndex(row => {
+        if (row.length < 2) return false;
+        return row[1] === barcode;
+      });
+
+      if (rowIndex === -1) {
+        throw new ValidationError(`Scanned entry not found: ${barcode} for ${agency}`);
+      }
+
+      const deletedRow = data[rowIndex];
+      const deletedDate = deletedRow[0];
+
+      // Delete the row by clearing it
+      await googleSheets.clearRow(agency, rowIndex + 1);
+      console.log(`✅ Successfully deleted row ${rowIndex + 1} from ${agency} sheet`);
+
+      // Find which month/year this entry belongs to for updating summary
+      const scanDate = new Date(deletedDate);
+      const month = (scanDate.getMonth() + 1).toString();
+      const year = scanDate.getFullYear().toString();
+
+      // Update the monthly summary scan count
+      const summary = await this.getMonthlySummary(agency, month, year);
+      if (summary) {
+        const newScanCount = Math.max(0, summary.totalScans - 1);
+        await this.updateMonthlySummaryScanCount(agency, month, year, newScanCount);
+        console.log(`✅ Updated scan count from ${summary.totalScans} to ${newScanCount}`);
+      }
+
+      console.log(`🏁 === DELETE SCANNED ENTRY COMPLETE ===\n`);
+
+      return {
+        success: true,
+        message: 'Scanned entry deleted successfully',
+        deletedEntry: {
+          agency,
+          barcode,
+          date: deletedDate,
+          month: this.getMonthName(month),
+          year
+        }
+      };
+    } catch (error) {
+      console.error(`❌ Error deleting scanned entry:`, error);
+      if (error instanceof ValidationError || error instanceof GoogleSheetsError) {
+        throw error;
+      }
+      throw new GoogleSheetsError(`Failed to delete scanned entry: ${error.message}`);
+    }
+  }
+
+  // Get inventory data for download
+  async getInventoryDataForDownload(agency, month, year) {
+    try {
+      console.log(`\n📊 === GET INVENTORY DATA FOR DOWNLOAD ===`);
+      console.log(`📋 Getting data for: ${agency} - ${this.getMonthName(month)} ${year}`);
+      
+      // Get monthly summary
+      const summary = await this.getMonthlySummary(agency, month, year);
+      if (!summary) {
+        throw new ValidationError(`No inventory found for ${agency} - ${this.getMonthName(month)} ${year}`);
+      }
+
+      // Get all scanned data from agency sheet
+      const data = await googleSheets.getSheetData(agency);
+      
+      // Filter scans for the specific month/year
+      const monthScans = data.filter(row => {
+        if (row.length < 2) return false;
+        const scanDate = new Date(row[0]);
+        return scanDate.getMonth() === parseInt(month) - 1 && scanDate.getFullYear() === parseInt(year);
+      });
+
+      console.log(`📊 Found ${monthScans.length} scans for download`);
+
+      return {
+        agency,
+        month: this.getMonthName(month),
+        year,
+        totalScans: monthScans.length,
+        status: summary.status,
+        createdAt: summary.createdAt,
+        completedAt: summary.completedAt,
+        scans: monthScans.map(row => ({
+          date: row[0],
+          barcode: row[1]
+        }))
+      };
+    } catch (error) {
+      if (error instanceof ValidationError || error instanceof GoogleSheetsError) {
+        throw error;
+      }
+      throw new GoogleSheetsError(`Failed to get inventory data for download: ${error.message}`);
     }
   }
 }
