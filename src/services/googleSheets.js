@@ -26,13 +26,25 @@ class GoogleSheetsService {
     }
 
     try {
-      const credentialsPath = process.env.GOOGLE_SHEETS_CREDENTIALS_PATH;
-      if (!credentialsPath) {
-        throw new Error('GOOGLE_SHEETS_CREDENTIALS_PATH environment variable is not set');
-      }
+      let credentials;
 
-      const resolvedPath = path.resolve(credentialsPath);
-      const credentials = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
+      // Check for base64 encoded credentials first (for Render deployment)
+      if (process.env.GOOGLE_CREDENTIALS_BASE64) {
+        console.log('🔐 Using base64 encoded Google credentials');
+        const base64Credentials = process.env.GOOGLE_CREDENTIALS_BASE64;
+        const credentialsJson = Buffer.from(base64Credentials, 'base64').toString('utf8');
+        credentials = JSON.parse(credentialsJson);
+      }
+      // Fallback to file-based credentials (for local development)
+      else if (process.env.GOOGLE_SHEETS_CREDENTIALS_PATH) {
+        console.log('📁 Using file-based Google credentials');
+        const credentialsPath = process.env.GOOGLE_SHEETS_CREDENTIALS_PATH;
+        const resolvedPath = path.resolve(credentialsPath);
+        credentials = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
+      }
+      else {
+        throw new Error('Neither GOOGLE_CREDENTIALS_BASE64 nor GOOGLE_SHEETS_CREDENTIALS_PATH environment variable is set');
+      }
       
       this.auth = new google.auth.GoogleAuth({
         credentials,

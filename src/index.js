@@ -11,6 +11,9 @@ const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Trust proxy for Render deployment (fixes rate limiter X-Forwarded-For header issue)
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 
