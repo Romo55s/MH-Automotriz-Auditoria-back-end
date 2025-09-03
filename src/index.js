@@ -17,10 +17,14 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
+// CORS configuration - Safari compatible
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Length', 'X-Request-Id'],
+  optionsSuccessStatus: 200 // Some legacy browsers (IE11, various SmartTVs) choke on 204
 }));
 
 // Rate limiting - more lenient in development
@@ -44,6 +48,29 @@ app.use(morgan('combined'));
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Safari-compatible cache control middleware
+app.use((req, res, next) => {
+  // Add headers to prevent Safari caching issues
+  res.set({
+    'Cache-Control': 'no-cache, no-store, must-revalidate, private',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'X-XSS-Protection': '1; mode=block'
+  });
+  
+  // Safari-specific headers
+  if (req.get('User-Agent') && req.get('User-Agent').includes('Safari')) {
+    res.set({
+      'Vary': 'Accept-Encoding, User-Agent',
+      'Last-Modified': new Date().toUTCString()
+    });
+  }
+  
+  next();
+});
 
 // Routes
 app.use('/api', apiRoutes);

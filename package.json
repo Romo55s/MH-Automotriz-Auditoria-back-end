@@ -15,6 +15,7 @@
     "deploy": "./scripts/deploy.sh",
     "start:prod": "./scripts/start-production.sh",
     "setup:render": "node scripts/setup-render-credentials.js",
+    "get:credentials": "node scripts/get-base64-credentials.js",
     "health": "curl -f http://localhost:5000/health || exit 1",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

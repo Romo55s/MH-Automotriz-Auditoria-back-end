@@ -32,8 +32,23 @@ class GoogleSheetsService {
       if (process.env.GOOGLE_CREDENTIALS_BASE64) {
         console.log('🔐 Using base64 encoded Google credentials');
         const base64Credentials = process.env.GOOGLE_CREDENTIALS_BASE64;
-        const credentialsJson = Buffer.from(base64Credentials, 'base64').toString('utf8');
-        credentials = JSON.parse(credentialsJson);
+        
+        // Validate base64 string length
+        if (base64Credentials.length < 1000) {
+          throw new Error(`Base64 credentials too short (${base64Credentials.length} chars). Expected ~2000+ chars. Check if the environment variable was truncated.`);
+        }
+        
+        try {
+          const credentialsJson = Buffer.from(base64Credentials, 'base64').toString('utf8');
+          credentials = JSON.parse(credentialsJson);
+          console.log(`✅ Successfully parsed base64 credentials (${credentialsJson.length} chars)`);
+        } catch (parseError) {
+          console.error('❌ Failed to parse base64 credentials:', parseError.message);
+          console.error(`Base64 length: ${base64Credentials.length} chars`);
+          console.error(`First 100 chars: ${base64Credentials.substring(0, 100)}...`);
+          console.error(`Last 100 chars: ...${base64Credentials.substring(base64Credentials.length - 100)}`);
+          throw new Error(`Invalid base64 credentials: ${parseError.message}`);
+        }
       }
       // Fallback to file-based credentials (for local development)
       else if (process.env.GOOGLE_SHEETS_CREDENTIALS_PATH) {
@@ -301,7 +316,19 @@ class GoogleSheetsService {
       return data;
     } catch (error) {
       console.error('Error reading from Google Sheets:', error);
-      throw new GoogleSheetsError('Failed to read from Google Sheets', error);
+      
+      // Provide more specific error messages based on the error type
+      if (error.code === 403) {
+        throw new GoogleSheetsError('Access denied to Google Sheets. Please check if the service account has permission to access the spreadsheet.', error);
+      } else if (error.code === 404) {
+        throw new GoogleSheetsError('Google Sheets document not found. Please check the spreadsheet ID and ensure it exists.', error);
+      } else if (error.message && error.message.includes('Quota exceeded')) {
+        throw new GoogleSheetsError('Google Sheets API quota exceeded. Please try again later.', error);
+      } else if (error.message && error.message.includes('permission')) {
+        throw new GoogleSheetsError('Permission denied. The service account may not have access to this spreadsheet.', error);
+      } else {
+        throw new GoogleSheetsError(`Failed to read from Google Sheets: ${error.message}`, error);
+      }
     }
   }
 

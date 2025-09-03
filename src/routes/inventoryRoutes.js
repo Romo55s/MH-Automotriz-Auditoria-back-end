@@ -53,6 +53,21 @@ router.get('/monthly-inventory/:agency/:month/:year', asyncHandler(async (req, r
   }
 
   const result = await inventoryService.getMonthlyInventory(agency, month, year);
+  
+  // Safari-specific response handling
+  const isSafari = req.get('User-Agent') && req.get('User-Agent').includes('Safari');
+  
+  if (isSafari) {
+    // Add ETag for Safari caching
+    const etag = `"${agency}-${month}-${year}-${Date.now()}"`;
+    res.set('ETag', etag);
+    
+    // Check if client has the same ETag
+    if (req.get('If-None-Match') === etag) {
+      return res.status(304).end();
+    }
+  }
+  
   res.status(200).json(result);
 }));
 
@@ -79,6 +94,21 @@ router.get('/check-monthly-inventory/:agency/:month/:year', asyncHandler(async (
   }
 
   const result = await inventoryService.checkMonthlyInventory(agency, month, year);
+  
+  // Safari-specific response handling
+  const isSafari = req.get('User-Agent') && req.get('User-Agent').includes('Safari');
+  
+  if (isSafari) {
+    // Add ETag for Safari caching
+    const etag = `"check-${agency}-${month}-${year}-${Date.now()}"`;
+    res.set('ETag', etag);
+    
+    // Check if client has the same ETag
+    if (req.get('If-None-Match') === etag) {
+      return res.status(304).end();
+    }
+  }
+  
   res.status(200).json(result);
 }));
 
@@ -174,6 +204,91 @@ router.post('/check-completion', asyncHandler(async (req, res) => {
   } catch (error) {
     console.error('Error checking inventory completion:', error);
     throw error;
+  }
+}));
+
+// GET /api/inventory/diagnose-google-sheets
+router.get('/diagnose-google-sheets', asyncHandler(async (req, res) => {
+  const googleSheets = require('../services/googleSheets');
+  
+  try {
+    console.log('🔍 === GOOGLE SHEETS DIAGNOSTIC START ===');
+    
+    // Test basic connectivity
+    await googleSheets.ensureInitialized();
+    console.log('✅ Google Sheets service initialized');
+    
+    // Test spreadsheet access
+    const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+    if (!spreadsheetId) {
+      throw new Error('GOOGLE_SHEETS_SPREADSHEET_ID environment variable not set');
+    }
+    console.log(`📊 Spreadsheet ID: ${spreadsheetId}`);
+    
+    // Test reading MonthlySummary sheet
+    let monthlySummaryData = null;
+    try {
+      monthlySummaryData = await googleSheets.getSheetData('MonthlySummary');
+      console.log(`✅ MonthlySummary sheet accessible (${monthlySummaryData.length} rows)`);
+    } catch (error) {
+      console.log(`❌ MonthlySummary sheet error: ${error.message}`);
+    }
+    
+    // Test creating a test sheet (if it doesn't exist)
+    const testSheetName = 'DiagnosticTest';
+    try {
+      await googleSheets.ensureSheetExists(testSheetName);
+      console.log(`✅ Test sheet creation/access successful`);
+      
+      // Clean up test sheet
+      try {
+        await googleSheets.clearSheet(testSheetName);
+        console.log(`✅ Test sheet cleanup successful`);
+      } catch (cleanupError) {
+        console.log(`⚠️ Test sheet cleanup failed: ${cleanupError.message}`);
+      }
+    } catch (error) {
+      console.log(`❌ Test sheet creation failed: ${error.message}`);
+    }
+    
+    // Check credentials info (without exposing sensitive data)
+    const credentialsInfo = {
+      hasBase64Credentials: !!process.env.GOOGLE_CREDENTIALS_BASE64,
+      hasFileCredentials: !!process.env.GOOGLE_SHEETS_CREDENTIALS_PATH,
+      base64Length: process.env.GOOGLE_CREDENTIALS_BASE64 ? process.env.GOOGLE_CREDENTIALS_BASE64.length : 0
+    };
+    console.log(`🔐 Credentials info:`, credentialsInfo);
+    
+    console.log('🏁 === GOOGLE SHEETS DIAGNOSTIC COMPLETE ===');
+    
+    res.json({
+      success: true,
+      message: 'Google Sheets diagnostic completed',
+      results: {
+        serviceInitialized: true,
+        spreadsheetId: spreadsheetId,
+        monthlySummaryAccessible: !!monthlySummaryData,
+        monthlySummaryRows: monthlySummaryData ? monthlySummaryData.length : 0,
+        testSheetCreation: true,
+        credentialsConfigured: credentialsInfo.hasBase64Credentials || credentialsInfo.hasFileCredentials,
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Google Sheets diagnostic failed:', error);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Google Sheets diagnostic failed',
+      error: error.message,
+      details: {
+        serviceInitialized: false,
+        spreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID || 'Not set',
+        credentialsConfigured: !!(process.env.GOOGLE_CREDENTIALS_BASE64 || process.env.GOOGLE_SHEETS_CREDENTIALS_PATH),
+        timestamp: new Date().toISOString()
+      }
+    });
   }
 }));
 
