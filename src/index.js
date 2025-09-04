@@ -17,9 +17,35 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(helmet());
 
-// CORS configuration - Safari compatible
+// CORS configuration - Safari compatible with multiple origins
+const allowedOrigins = [
+  'https://mh-automotriz-auditoria.netlify.app', // Production frontend
+  'http://localhost:3000', // Local development
+  'http://localhost:3001', // Alternative local port
+  'http://127.0.0.1:3000', // Alternative localhost
+  'http://127.0.0.1:3001'  // Alternative localhost port
+];
+
+// Add custom origin from environment if provided
+if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_URL)) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    // Log blocked origins for debugging
+    console.log(`🚫 CORS blocked origin: ${origin}`);
+    console.log(`✅ Allowed origins: ${allowedOrigins.join(', ')}`);
+    
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
@@ -44,6 +70,14 @@ app.use('/api/', limiter);
 
 // Logging
 app.use(morgan('combined'));
+
+// CORS debugging middleware
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    console.log(`🔍 CORS Preflight request from: ${req.get('Origin') || 'No Origin'}`);
+  }
+  next();
+});
 
 // Body parsing
 app.use(express.json({ limit: '10mb' }));
