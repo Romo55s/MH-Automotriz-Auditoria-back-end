@@ -5,7 +5,7 @@ const { asyncHandler, ValidationError, GoogleSheetsError } = require('../middlew
 
 // POST /api/inventory/save-scan
 router.post('/save-scan', asyncHandler(async (req, res) => {
-  const { agency, month, year, code, user, userName } = req.body;
+  const { agency, month, year, code, user, userName, carData } = req.body;
 
   // Validate required fields
   if (!agency || !month || !year || !code || !user) {
@@ -18,7 +18,8 @@ router.post('/save-scan', asyncHandler(async (req, res) => {
     year,
     code,
     user,
-    userName: userName || user
+    userName: userName || user,
+    carData: carData || null // Optional car data for QR scans
   });
 
   res.status(200).json(result);

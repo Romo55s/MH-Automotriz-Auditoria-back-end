@@ -191,15 +191,16 @@ class GoogleSheetsService {
 
       if (!sheetExists) {
         if (sheetName === 'MonthlySummary') {
-          // MonthlySummary with all required fields
+          // MonthlySummary with all required fields - Updated to use "Location" instead of "Agency"
           const headers = [
-            'Month', 'Year', 'Agency', 'Status', 'Created At', 'Created By', 'User Name', 
+            'Month', 'Year', 'Location', 'Status', 'Created At', 'Created By', 'User Name', 
             'Total Scans', 'Session ID', 'Completed At', 'Finished By'
           ];
           await this.createSheet(sheetName, headers);
         } else {
-          // Agency sheets: simple and clean, only current month data
-          const headers = ['Date', 'Barcode', 'Scanned By'];
+          // Location sheets: simple and clean, only current month data
+          // Updated to handle both agencies and bodegas
+          const headers = ['Date', 'Identifier', 'Scanned By', 'Serie', 'Marca', 'Color', 'Ubicaciones'];
           await this.createSheet(sheetName, headers);
         }
         console.log(`✅ Created sheet: ${sheetName}`);

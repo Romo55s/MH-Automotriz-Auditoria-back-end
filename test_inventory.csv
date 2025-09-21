@@ -1,0 +1,21 @@
+serie,marca,color,ubicaciones
+1HGCM82633A001234,Honda,Blanco,Lote A-1
+2T1BURHE0JC002345,Toyota,Negro,Lote A-2
+3VW3AW7AJ0K003456,Volkswagen,Plata,Lote B-1
+4KMHL14JA5K004567,Hyundai,Rojo,Lote B-2
+5KNDJP3A59K005678,Kia,Azul,Lote C-1
+6JM1BK32F28006789,Mazda,Gris,Lote C-2
+7JS2RC54A7K007890,Suzuki,Verde,Lote D-1
+8KMHD35LH5E008901,Hyundai,Amarillo,Lote D-2
+9WVWZZZ3CZK009012,Volkswagen,Cafe,Lote E-1
+1G1ZT58N08F010123,Chevrolet,Morado,Lote E-2
+2FMDK3GC0DB011234,Ford,Rosa,Lote F-1
+3FAHP0HA8CL012345,Ford,Naranja,Lote F-2
+4T1BK1EB8HU013456,Toyota,Turquesa,Lote G-1
+5NPE34AF8JH014567,Hyundai,Dorado,Lote G-2
+6KMHD35LE5E015678,Hyundai,Plateado,Lote H-1
+7JH4NA1157M016789,Honda,Beige,Lote H-2
+8WBAPH7C58B017890,BMW,Negro Mate,Lote I-1
+9WVWZZZ3BZW018901,Volkswagen,Blanco Perla,Lote I-2
+1FTFW1ET0DF019012,Ford,Azul Marino,Lote J-1
+2GNAXKEV6L6020123,Chevrolet,Rojo Cereza,Lote J-2

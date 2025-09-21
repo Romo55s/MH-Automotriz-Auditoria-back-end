@@ -4,6 +4,44 @@ const { ValidationError, GoogleSheetsError } = require('../middleware/errorHandl
 class InventoryService {
   constructor() {
     this.summarySheetName = 'MonthlySummary';
+    
+    // Available locations (agencies + bodegas)
+    this.locations = {
+      // Existing agencies
+      'suzuki': { name: 'Suzuki', type: 'agency' },
+      'nissan': { name: 'Nissan', type: 'agency' },
+      'honda': { name: 'Honda', type: 'agency' },
+      'toyota': { name: 'Toyota', type: 'agency' },
+      'mazda': { name: 'Mazda', type: 'agency' },
+      'hyundai': { name: 'Hyundai', type: 'agency' },
+      'kia': { name: 'Kia', type: 'agency' },
+      'volkswagen': { name: 'Volkswagen', type: 'agency' },
+      'chevrolet': { name: 'Chevrolet', type: 'agency' },
+      'ford': { name: 'Ford', type: 'agency' },
+      
+      // New bodegas
+      'bodega_coyote': { name: 'Bodega Coyote', type: 'bodega' },
+      'bodega_goyo': { name: 'Bodega Goyo', type: 'bodega' }
+    };
+  }
+
+  // Get available locations
+  getAvailableLocations() {
+    return Object.keys(this.locations).map(key => ({
+      id: key,
+      name: this.locations[key].name,
+      type: this.locations[key].type
+    }));
+  }
+
+  // Validate location name
+  validateLocation(locationId) {
+    return this.locations.hasOwnProperty(locationId.toLowerCase());
+  }
+
+  // Get location info
+  getLocationInfo(locationId) {
+    return this.locations[locationId.toLowerCase()] || null;
   }
 
   // Convert month number to readable name
@@ -48,9 +86,6 @@ class InventoryService {
   // Check inventory session limits
   async checkInventoryLimits(agency, month, year) {
     try {
-      console.log(`\n🔍 === CHECKING INVENTORY LIMITS ===`);
-      console.log(`📋 Checking limits for: ${agency} - ${this.getMonthName(month)} ${year}`);
-      
       // Ensure Monthly Summary sheet exists
       await googleSheets.ensureSheetExists(this.summarySheetName);
       
@@ -62,13 +97,9 @@ class InventoryService {
         return inv.status === 'Active';
       });
       
-      console.log(`📊 Current month inventories: ${currentMonthInventories.length}/2`);
-      console.log(`📊 Active inventories this month: ${activeInventoriesThisMonth.length}/1`);
-      
       // FIRST: Check if there's already an active inventory for this specific month/year
       // If there is, allow adding scans to it (multiple users can scan to same inventory)
       if (activeInventoriesThisMonth.length >= 1) {
-        console.log(`✅ Found active inventory for this month - allowing scans to be added`);
         return {
           canStart: true,
           currentMonthCount: currentMonthInventories.length,
@@ -82,7 +113,6 @@ class InventoryService {
         throw new ValidationError(`Monthly inventory limit reached for ${agency}. Maximum 2 inventories per month allowed.`);
       }
       
-      console.log(`✅ No active inventory for this month - can start new inventory`);
       return {
         canStart: true,
         currentMonthCount: currentMonthInventories.length,
@@ -99,9 +129,6 @@ class InventoryService {
   // Save a barcode scan
   async saveScan(scanData) {
     try {
-      console.log('\n🚀 === SAVE SCAN START ===');
-      console.log(`📱 Scan Data:`, JSON.stringify(scanData, null, 2));
-      
       // Validate input
       if (!scanData.agency || !scanData.code || !scanData.user) {
         throw new ValidationError('Missing required fields: agency, code, user');
@@ -123,100 +150,61 @@ class InventoryService {
         year = now.getFullYear().toString();
       }
 
-      console.log(`📅 Extracted month: ${month}, year: ${year} from timestamp: ${scanData.timestamp}`);
-
       // Check inventory session limits before proceeding
-      console.log(`🔍 Checking inventory session limits...`);
       await this.checkInventoryLimits(scanData.agency, month, year);
-      console.log(`✅ Inventory limits check passed`);
 
       // Ensure Monthly Summary sheet exists
-      console.log(`📋 Ensuring MonthlySummary sheet exists...`);
       await googleSheets.ensureSheetExists(this.summarySheetName);
-      console.log(`✅ MonthlySummary sheet ensured`);
 
       // Check inventory limits and existing inventories
-      console.log(`🔍 Checking inventory limits and existing inventories...`);
       const existingSummary = await this.getMonthlySummary(scanData.agency, month, year);
-      console.log(`📊 Existing summary found:`, existingSummary ? 'YES' : 'NO');
-      if (existingSummary) {
-        console.log(`   Status: ${existingSummary.status}`);
-        console.log(`   Total Scans: ${existingSummary.totalScans}`);
-        console.log(`   Session ID: ${existingSummary.sessionId}`);
-      }
       
       // Check inventory limits (2 per month, 1 active at a time)
-      console.log(`🔍 Checking inventory limits...`);
       const limitsCheck = await this.checkInventoryLimits(scanData.agency, month, year);
-      console.log(`📊 Limits check result:`, limitsCheck);
       
       // If there's an active inventory, we can add scans to it
-      if (existingSummary && existingSummary.status === 'Active') {
-        console.log(`✅ Found active inventory - adding scan to existing inventory`);
-      } else if (existingSummary && existingSummary.status === 'Completed') {
-        console.log(`📋 Found completed inventory - checking if we can start a new one`);
+      if (existingSummary && existingSummary.status === 'Completed') {
         // The checkInventoryLimits function will handle the logic for starting a new inventory
         if (!limitsCheck.canStart) {
           throw new ValidationError(`Cannot start new inventory: ${limitsCheck.message || 'Monthly limit reached'}`);
         }
-        console.log(`✅ Can start new inventory - proceeding with scan`);
-      } else {
-        console.log(`📋 No existing inventory - starting new one`);
       }
 
       // Check for duplicate barcode in current month
-      console.log(`🔍 Checking for duplicate barcode: ${scanData.code}`);
       const isDuplicate = await this.checkDuplicateBarcode(scanData.agency, month, year, scanData.code);
-      console.log(`📊 Duplicate barcode found:`, isDuplicate ? 'YES' : 'NO');
       if (isDuplicate) {
         throw new ValidationError(`Barcode ${scanData.code} has already been scanned in ${scanData.agency} - ${this.getMonthName(month)} ${year} inventory`);
       }
 
-      // Save scan to agency sheet (simple: Date, Barcode)
+      // Save scan to location sheet (enhanced: Date, Identifier, User, Serie, Marca, Color, Ubicaciones)
       const scanDate = new Date().toLocaleDateString('en-US', { 
         month: 'short', 
         day: 'numeric', 
         year: 'numeric' 
       });
-      const values = [scanDate, scanData.code, scanData.user];
       
-      console.log(`📱 Saving scan to agency sheet: ${scanData.agency}`);
-      console.log(`   Values: [${values.join(', ')}]`);
+      // Build values array with car data if available
+      const values = [
+        scanDate,                                    // Date
+        scanData.code,                               // Identifier (serie or barcode)
+        scanData.user,                               // Scanned By
+        scanData.carData?.serie || '',               // Serie
+        scanData.carData?.marca || '',               // Marca
+        scanData.carData?.color || '',               // Color
+        scanData.carData?.ubicaciones || ''          // Ubicaciones
+      ];
+      
       await googleSheets.appendRow(scanData.agency, values);
-      console.log(`✅ Scan saved to agency sheet: ${scanData.code} for ${scanData.agency} on ${scanDate}`);
-
-      // BEFORE: Check current state of MonthlySummary sheet
-      console.log(`\n🔍 === BEFORE MONTHLY SUMMARY OPERATIONS ===`);
-      const beforeData = await googleSheets.getSheetData(this.summarySheetName);
-      console.log(`📊 MonthlySummary rows before operations: ${beforeData.length}`);
-      beforeData.forEach((row, idx) => {
-        if (idx === 0) {
-          console.log(`   Row ${idx + 1} (Headers): [${row.join(', ')}]`);
-        } else if (row.length >= 3) {
-          const monthMatch = row[0] === this.getMonthName(month);
-          const yearMatch = row[1] === year.toString();
-          const agencyMatch = row[2] === scanData.agency;
-          console.log(`   Row ${idx + 1}: [${row.join(', ')}]`);
-          console.log(`     Month match: ${monthMatch}, Year match: ${yearMatch}, Agency match: ${agencyMatch}`);
-        }
-      });
 
       // VALIDATION: Ensure only one monthly summary exists
-      console.log(`\n🔍 === VALIDATION STEP ===`);
       const validation = await this.validateSingleMonthlySummary(scanData.agency, month, year);
-      console.log(`📊 Validation result:`, validation);
       
       if (!validation.valid) {
-        console.log(`⚠️ Validation failed: ${validation.message}`);
-        console.log(`🧹 Attempting to clean up duplicates...`);
-        
         // Try to clean up duplicates
         const cleanupResult = await this.cleanupSpecificDuplicates(scanData.agency, month, year);
-        console.log(`🧹 Cleanup result:`, cleanupResult);
         
         // Re-validate after cleanup
         const revalidation = await this.validateSingleMonthlySummary(scanData.agency, month, year);
-        console.log(`📊 Re-validation result:`, revalidation);
         
         if (!revalidation.valid) {
           throw new GoogleSheetsError(`Failed to resolve duplicate rows for ${scanData.agency} - ${this.getMonthName(month)} ${year}. Please contact support.`);
@@ -224,65 +212,18 @@ class InventoryService {
       }
 
       // Use atomic find-or-create approach to prevent duplicates
-      console.log(`\n🔍 === FIND OR CREATE MONTHLY SUMMARY ===`);
       const summary = await this.findOrCreateMonthlySummary(scanData.agency, month, year, scanData.user, scanData.userName);
-      console.log(`✅ Monthly summary result:`, {
-        month: summary.month,
-        year: summary.year,
-        agency: summary.agency,
-        status: summary.status,
-        totalScans: summary.totalScans,
-        sessionId: summary.sessionId
-      });
       
-      // AFTER: Check state of MonthlySummary sheet after findOrCreate
-      console.log(`\n🔍 === AFTER FIND OR CREATE ===`);
-      const afterFindCreate = await googleSheets.getSheetData(this.summarySheetName);
-      console.log(`📊 MonthlySummary rows after findOrCreate: ${afterFindCreate.length}`);
-      afterFindCreate.forEach((row, idx) => {
-        if (idx === 0) {
-          console.log(`   Row ${idx + 1} (Headers): [${row.join(', ')}]`);
-        } else if (row.length >= 3) {
-          const monthMatch = row[0] === this.getMonthName(month);
-          const yearMatch = row[1] === year.toString();
-          const agencyMatch = row[2] === scanData.agency;
-          console.log(`   Row ${idx + 1}: [${row.join(', ')}]`);
-          console.log(`     Month match: ${monthMatch}, Year match: ${yearMatch}, Agency match: ${agencyMatch}`);
-        }
-      });
+      // Check state after findOrCreate
 
       // Increment the scan count
       const newScanCount = summary.totalScans + 1;
-      console.log(`\n📊 === INCREMENTING SCAN COUNT ===`);
-      console.log(`📊 Incrementing scan count from ${summary.totalScans} to ${newScanCount}`);
       
       // Update the scan count in the summary - use the atomic update method
-      console.log(`🔧 === UPDATING SCAN COUNT ===`);
       await this.updateMonthlySummaryScanCount(scanData.agency, month, year, newScanCount, summary.sessionId);
-      console.log(`✅ Scan count updated successfully`);
 
-      // FINAL: Check final state of MonthlySummary sheet
-      console.log(`\n🔍 === FINAL STATE CHECK ===`);
+      // Validate final state to prevent duplicates
       const finalData = await googleSheets.getSheetData(this.summarySheetName);
-      console.log(`📊 MonthlySummary rows after all operations: ${finalData.length}`);
-      finalData.forEach((row, idx) => {
-        if (idx === 0) {
-          console.log(`   Row ${idx + 1} (Headers): [${row.join(', ')}]`);
-        } else if (row.length >= 3) {
-          const monthMatch = row[0] === this.getMonthName(month);
-          const yearMatch = row[1] === year.toString();
-          const agencyMatch = row[2] === scanData.agency;
-          console.log(`   Row ${idx + 1}: [${row.join(', ')}]`);
-          console.log(`     Month match: ${monthMatch}, Year match: ${yearMatch}, Agency match: ${agencyMatch}`);
-          if (monthMatch && yearMatch && agencyMatch) {
-            console.log(`     ⭐ THIS IS OUR TARGET ROW`);
-            console.log(`     Total Scans: ${row[7] || 'N/A'}`);
-            console.log(`     Session ID: ${row[8] || 'N/A'}`);
-          }
-        }
-      });
-
-      // Count target rows
       const targetRows = finalData.filter((row, idx) => {
         if (idx === 0 || row.length < 3) return false;
         return row[0] === this.getMonthName(month) && 
@@ -290,21 +231,9 @@ class InventoryService {
                row[2] === scanData.agency;
       });
       
-      console.log(`\n🎯 === DUPLICATE CHECK ===`);
-      console.log(`📊 Target rows found for ${scanData.agency} - ${this.getMonthName(month)} ${year}: ${targetRows.length}`);
-      
       if (targetRows.length > 1) {
-        console.log(`⚠️ WARNING: MULTIPLE ROWS FOUND! This indicates a duplicate creation issue!`);
-        targetRows.forEach((row, idx) => {
-          console.log(`   Duplicate ${idx + 1}: [${row.join(', ')}]`);
-        });
-      } else if (targetRows.length === 1) {
-        console.log(`✅ SUCCESS: Only one row found - no duplicates`);
-      } else {
-        console.log(`❌ ERROR: No target rows found - this shouldn't happen`);
+        console.error(`⚠️ WARNING: Multiple rows found for ${scanData.agency} - ${this.getMonthName(month)} ${year}`);
       }
-
-      console.log(`\n🏁 === SAVE SCAN COMPLETE ===\n`);
 
       return {
         success: true,
@@ -322,10 +251,7 @@ class InventoryService {
         }
       };
     } catch (error) {
-      console.error(`\n💥 === SAVE SCAN ERROR ===`);
       console.error(`❌ Error in saveScan:`, error.message);
-      console.error(`Stack trace:`, error.stack);
-      console.error(`=== END ERROR ===\n`);
       
       if (error instanceof ValidationError || error instanceof GoogleSheetsError) {
         throw error;
@@ -436,8 +362,15 @@ class InventoryService {
         totalScans: monthScans.length,
         scans: monthScans.map(row => ({
           date: row[0],
-          barcode: row[1],
-          scannedBy: row[2] || ''
+          identifier: row[1], // Can be barcode or serie
+          scannedBy: row[2] || '',
+          // Enhanced car data from new format
+          serie: row[3] || '',
+          marca: row[4] || '',
+          color: row[5] || '',
+          ubicaciones: row[6] || '',
+          // Legacy compatibility
+          barcode: row[1] // Keep for backward compatibility
         }))
       };
     } catch (error) {
@@ -586,18 +519,10 @@ class InventoryService {
   // Update monthly summary scan count only
   async updateMonthlySummaryScanCount(agency, month, year, newScanCount, sessionId = null) {
     try {
-      console.log(`\n🔧 === UPDATE MONTHLY SUMMARY SCAN COUNT START ===`);
-      console.log(`📋 Updating scan count for: ${agency} - ${this.getMonthName(month)} ${year}`);
-      console.log(`📊 New scan count: ${newScanCount}`);
-      if (sessionId) {
-        console.log(`🔑 Session ID: ${sessionId}`);
-      }
       
       const data = await googleSheets.getSheetData(this.summarySheetName);
-      console.log(`📊 Current MonthlySummary data rows: ${data.length}`);
       
       // Find the row to update
-      console.log(`🔍 Looking for row to update...`);
       const rowIndex = data.findIndex(row => {
         if (row.length < 3) return false;
         const monthMatch = row[0] === this.getMonthName(month);
@@ -607,38 +532,23 @@ class InventoryService {
         // If sessionId is provided, also match the session ID (column 8)
         const sessionMatch = sessionId ? row[8] === sessionId : true;
         
-        console.log(`   Row [${row.join(', ')}]: monthMatch=${monthMatch}, yearMatch=${yearMatch}, agencyMatch=${agencyMatch}, sessionMatch=${sessionMatch}`);
         
         return monthMatch && yearMatch && agencyMatch && sessionMatch;
       });
 
-      console.log(`🔍 Row index found: ${rowIndex}`);
-
       if (rowIndex !== -1) {
         // Update only the scan count field (column 8)
         const existingRow = data[rowIndex];
-        console.log(`📋 Existing row data: [${existingRow.join(', ')}]`);
-        console.log(`📊 Current scan count: ${existingRow[7] || 'N/A'}`);
-        
         const updatedRow = [...existingRow];
         updatedRow[7] = newScanCount.toString(); // Total Scans (8th column)
-        console.log(`📋 Updated row data: [${updatedRow.join(', ')}]`);
         
         // Update the entire row
-        console.log(`🔧 Updating row ${rowIndex + 1} in MonthlySummary sheet...`);
         await googleSheets.updateRow(this.summarySheetName, rowIndex + 1, updatedRow);
-        
-        console.log(`✅ Successfully updated scan count for ${agency} - ${this.getMonthName(month)} ${year}: ${newScanCount}`);
-        console.log(`🏁 === UPDATE SCAN COUNT COMPLETE ===\n`);
       } else {
-        console.log(`❌ Row not found for ${agency} - ${this.getMonthName(month)} ${year}`);
-        console.log(`📊 Available rows:`, data.map((row, idx) => `${idx}: [${row.join(', ')}]`));
-        console.log(`🏁 === UPDATE SCAN COUNT FAILED ===\n`);
         throw new GoogleSheetsError(`Monthly summary row not found for ${agency} - ${this.getMonthName(month)} ${year}`);
       }
     } catch (error) {
       console.error(`❌ Error updating monthly summary scan count:`, error);
-      console.error(`🏁 === UPDATE SCAN COUNT ERROR ===\n`);
       throw new GoogleSheetsError(`Failed to update monthly summary scan count: ${error.message}`);
     }
   }
@@ -646,47 +556,23 @@ class InventoryService {
   // Find or create monthly summary (atomic operation)
   async findOrCreateMonthlySummary(agency, month, year, user, userName) {
     try {
-      console.log(`\n🔍 === FIND OR CREATE MONTHLY SUMMARY START ===`);
-      console.log(`📋 Looking for: ${agency} - ${this.getMonthName(month)} ${year}`);
-      
       // First, check all existing inventories for this agency/month/year
-      console.log(`🔍 Step 1: Checking for existing inventories...`);
       const allInventories = await this.getAllMonthlyInventories(agency, month, year);
       
       if (allInventories.length > 0) {
-        console.log(`📊 Found ${allInventories.length} existing inventory(ies):`);
-        allInventories.forEach((inv, idx) => {
-          console.log(`   Inventory ${idx + 1}: Status=${inv.status}, Scans=${inv.totalScans}, Session=${inv.sessionId}`);
-        });
         
         // Look for an active inventory first
         const activeInventory = allInventories.find(inv => inv.status === 'Active');
         
         if (activeInventory) {
-          console.log(`✅ Found active inventory - will add scan to existing active inventory`);
-          console.log(`   Details:`, {
-            month: activeInventory.month,
-            year: activeInventory.year,
-            agency: activeInventory.agency,
-            status: activeInventory.status,
-            totalScans: activeInventory.totalScans,
-            sessionId: activeInventory.sessionId
-          });
-          console.log(`🏁 === FIND OR CREATE COMPLETE (EXISTING ACTIVE) ===\n`);
           return activeInventory;
         } else {
-          console.log(`📋 No active inventory found - all existing inventories are completed`);
-          console.log(`🔍 Checking if we can create a new inventory (limit: 2 per month)...`);
-          
           if (allInventories.length >= 2) {
             throw new ValidationError(`Monthly inventory limit reached for ${agency}. Maximum 2 inventories per month allowed.`);
           }
-          
-          console.log(`✅ Can create new inventory (${allInventories.length}/2 used)`);
           // Continue to create new inventory below
         }
       } else {
-        console.log(`📋 No existing inventories found - will create first inventory`);
         // Continue to create new inventory below
       }
       
@@ -1109,8 +995,8 @@ class InventoryService {
 
       const headers = data[0];
       const expectedHeaders = [
-        'Month', 'Year', 'Agency', 'Status', 'Created At', 'Created By', 
-        'User Name', 'Total Scans', 'Session ID', 'Completed At'
+        'Month', 'Year', 'Location', 'Status', 'Created At', 'Created By', 
+        'User Name', 'Total Scans', 'Session ID', 'Completed At', 'Finished By'
       ];
 
       // Check if headers match expected structure
@@ -1556,8 +1442,15 @@ class InventoryService {
         sessionId: summary.sessionId, // Include sessionId for download tracking
         scans: monthScans.map(row => ({
           date: row[0],
-          barcode: row[1],
-          scannedBy: row[2] || ''
+          identifier: row[1], // Can be barcode or serie
+          scannedBy: row[2] || '',
+          // Enhanced car data from new format
+          serie: row[3] || '',
+          marca: row[4] || '',
+          color: row[5] || '',
+          ubicaciones: row[6] || '',
+          // Legacy compatibility
+          barcode: row[1] // Keep for backward compatibility
         }))
       };
     } catch (error) {

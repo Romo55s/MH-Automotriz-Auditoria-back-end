@@ -29,16 +29,24 @@ class DownloadService {
         path: filepath,
         header: [
           { id: 'date', title: 'Date' },
-          { id: 'barcode', title: 'Barcode' },
-          { id: 'scannedBy', title: 'Scanned By' }
+          { id: 'identifier', title: 'Identifier' },
+          { id: 'scannedBy', title: 'Scanned By' },
+          { id: 'serie', title: 'Serie' },
+          { id: 'marca', title: 'Marca' },
+          { id: 'color', title: 'Color' },
+          { id: 'ubicaciones', title: 'Ubicaciones' }
         ]
       });
 
-      // Prepare data for CSV - Date, Barcode, and Scanned By
+      // Prepare data for CSV - Enhanced with car data
       const csvData = inventoryData.scans.map(scan => ({
         date: scan.date,
-        barcode: scan.barcode,
-        scannedBy: scan.scannedBy || ''
+        identifier: scan.identifier || scan.barcode, // Support both formats
+        scannedBy: scan.scannedBy || '',
+        serie: scan.serie || '',
+        marca: scan.marca || '',
+        color: scan.color || '',
+        ubicaciones: scan.ubicaciones || ''
       }));
 
       console.log(`📊 CSV data prepared:`, csvData.slice(0, 3)); // Log first 3 rows for debugging
@@ -69,15 +77,19 @@ class DownloadService {
       // Create workbook
       const workbook = XLSX.utils.book_new();
 
-      // Prepare data for Excel - Date, Barcode, and Scanned By
+      // Prepare data for Excel - Enhanced with car data
       const excelData = [
         // Header row
-        ['Date', 'Barcode', 'Scanned By'],
+        ['Date', 'Identifier', 'Scanned By', 'Serie', 'Marca', 'Color', 'Ubicaciones'],
         // Data rows
         ...inventoryData.scans.map(scan => [
           scan.date,
-          scan.barcode,
-          scan.scannedBy || ''
+          scan.identifier || scan.barcode, // Support both formats
+          scan.scannedBy || '',
+          scan.serie || '',
+          scan.marca || '',
+          scan.color || '',
+          scan.ubicaciones || ''
         ])
       ];
 
