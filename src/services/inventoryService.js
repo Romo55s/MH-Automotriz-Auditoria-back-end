@@ -318,9 +318,25 @@ class InventoryService {
         user
       );
 
-      // Note: Agency sheet is NOT cleared to allow downloads after completion
-      // The sheet will be cleared when starting a new inventory for the next month
-      console.log(`📋 Agency sheet preserved for download access`);
+      // Create automatic backup to Google Drive when finishing session (only if there's data)
+      if (totalScans > 0) {
+        console.log(`📁 Creating automatic backup for completed session with ${totalScans} scans...`);
+        try {
+          const fileStorageService = require('./fileStorageService');
+          const backupResult = await fileStorageService.storeInventoryFile(agency, month, year, 'csv', summary.sessionId);
+          console.log(`✅ Automatic backup created: ${backupResult.filename}`);
+          
+          // Clear agency sheet data after successful backup
+          await this.clearAgencyDataAfterDownload(agency, month, year, summary.sessionId);
+          console.log(`🧹 Agency sheet cleared after backup`);
+        } catch (backupError) {
+          console.error(`❌ Automatic backup failed:`, backupError.message);
+          console.log(`📋 Agency sheet preserved for manual download (backup failed)`);
+        }
+      } else {
+        console.log(`⚠️ No scans found (${totalScans} scans) - skipping backup creation`);
+        console.log(`📋 Agency sheet preserved (no data to backup)`);
+      }
 
       return {
         success: true,
@@ -1387,14 +1403,23 @@ class InventoryService {
       const data = await googleSheets.getSheetData(agency);
       console.log(`📊 Total rows in agency sheet: ${data.length}`);
       
-      // Filter scans for the specific month/year with better date parsing
-      const monthScans = data.filter(row => {
+      // Skip header row (first row) and filter scans for the specific month/year
+      const dataRows = data.slice(1); // Skip first row (headers)
+      console.log(`📊 Data rows (excluding headers): ${dataRows.length}`);
+      
+      const monthScans = dataRows.filter(row => {
         if (row.length < 2 || !row[0] || !row[1]) return false;
         
         try {
+          // Skip if this looks like a header row
+          const dateStr = row[0].toString().trim();
+          if (dateStr === 'Date' || dateStr === 'VIN' || dateStr === 'Brand' || dateStr === 'Model' || dateStr === 'Year') {
+            console.log(`⚠️ Skipping header row: ${dateStr}`);
+            return false;
+          }
+          
           // Try different date formats
           let scanDate;
-          const dateStr = row[0].toString().trim();
           
           // Handle different date formats
           if (dateStr.includes('Sep')) {

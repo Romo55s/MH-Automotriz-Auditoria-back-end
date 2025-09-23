@@ -1,16 +1,18 @@
 # 🚗 Car Inventory Backend
 
-A robust Node.js backend API for managing monthly car inventory with QR code generation, Google Sheets integration, and comprehensive security features.
+A comprehensive Node.js backend API for managing monthly car inventory with QR code generation, Google Sheets integration, Google Drive storage, and advanced security features.
 
 ## ✨ Features
 
-- **Monthly Inventory Management**: Each location can have multiple inventories per month
+- **Multiple Inventories Per Month**: Each location can have up to 2 inventories per month with unique session tracking
 - **QR Code Generation**: Generate QR codes from CSV files with car data (serie, marca, color, ubicaciones)
 - **QR Code Scanning**: Scan generated QR codes to update inventory
 - **Google Sheets Integration**: Automatic data storage and retrieval
+- **Smart Google Drive Storage**: Automatic backup with 30-day cleanup and smart download flow
 - **Multi-Location Support**: Support for both Agencies and Bodegas
 - **Session Management**: Complete inventory session lifecycle
 - **CSV Processing**: Upload and process CSV files with car inventory data
+- **File Management**: Download and manage stored inventory files
 - **Input Validation**: Comprehensive data validation and sanitization
 - **Security Features**: Rate limiting, CORS, Helmet security headers
 - **Logging & Monitoring**: Request logging and error tracking
@@ -32,6 +34,9 @@ backend/
 │   │   └── validationRoutes.js # Data validation routes
 │   ├── services/
 │   │   ├── googleSheets.js   # Google Sheets service
+│   │   ├── googleDrive.js    # Google Drive service
+│   │   ├── fileStorageService.js # File storage management
+│   │   ├── cleanupScheduler.js # Automatic file cleanup
 │   │   ├── inventoryService.js # Inventory business logic
 │   │   ├── qrService.js      # QR code generation & processing
 │   │   └── downloadService.js # File generation service
@@ -43,12 +48,14 @@ backend/
 ├── credentials/
 │   └── google-credentials.json # Google service account credentials
 ├── docs/                     # 📚 Complete documentation library
-│   ├── README.md            # Documentation index and navigation
 │   ├── QR_IMPLEMENTATION_GUIDE.md # Frontend integration guide
+│   ├── GOOGLE_DRIVE_INTEGRATION_GUIDE.md # Google Drive setup
+│   ├── PRODUCTION_DEPLOYMENT_GUIDE.md # Production deployment
+│   ├── FRONTEND_IMPLEMENTATION_GUIDE.md # Frontend Google Drive integration
 │   ├── CHANGELOG.md         # Version history and features
 │   ├── IMPLEMENTATION_SUMMARY.md # Executive summary
 │   ├── env.template         # Environment configuration template
-│   └── [deployment guides] # Production deployment documentation
+│   └── [other guides]       # Additional documentation
 ├── temp/                     # Temporary files for QR codes and downloads
 ├── test_inventory.csv        # Sample CSV file for testing
 └── README.md                 # Main project documentation
@@ -76,6 +83,14 @@ NODE_ENV=development
 GOOGLE_SHEETS_CREDENTIALS_PATH=./credentials/google-credentials.json
 GOOGLE_SHEETS_SPREADSHEET_ID=your_spreadsheet_id_here
 
+# Google Drive Configuration (for file storage)
+GOOGLE_DRIVE_INVENTORY_FOLDER_ID=your_main_folder_id_here
+GOOGLE_DRIVE_RETENTION_DAYS=30
+GOOGLE_DRIVE_CREDENTIALS_PATH=./credentials/google-drive-credentials.json
+GOOGLE_REFRESH_TOKEN=your_refresh_token_here
+GOOGLE_ACCESS_TOKEN=your_access_token_here
+GOOGLE_API_KEY=your_api_key_here
+
 # Rate Limiting
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX_REQUESTS=100
@@ -84,7 +99,9 @@ RATE_LIMIT_MAX_REQUESTS=100
 FRONTEND_URL=http://localhost:3000
 ```
 
-### 3. **Google Sheets Setup**
+### 3. **Google Services Setup**
+
+#### Google Sheets (Required)
 1. **Enable Google Sheets API**:
    - Go to [Google Cloud Console](https://console.cloud.google.com/)
    - Create a new project or select existing one
@@ -96,11 +113,28 @@ FRONTEND_URL=http://localhost:3000
    - Share your Google Sheets with the service account email
    - Give "Editor" permissions
 
-3. **Setup Credentials**:
+#### Google Drive (For File Storage)
+1. **Enable Google Drive API**:
+   - In the same Google Cloud project
+   - Enable Google Drive API
+
+2. **Create OAuth 2.0 Client**:
+   - Go to **APIs & Services** → **Credentials**
+   - Create **Desktop Application** OAuth client
+   - Download credentials as `google-drive-credentials.json`
+
+3. **Generate OAuth Tokens**:
    ```bash
-   # Your credentials are already configured in credentials/google-credentials.json
-   # Just make sure to set your Google Sheets ID in .env
+   # Use the setup script to generate tokens
+   node scripts/setup-oauth-production.js
    ```
+
+4. **Create API Key**:
+   - Create API key in Google Cloud Console
+   - Restrict to Google Drive API
+   - Add to `.env` as `GOOGLE_API_KEY`
+
+📖 **Detailed Setup**: See [Google Drive Integration Guide](docs/GOOGLE_DRIVE_INTEGRATION_GUIDE.md)
 
 ### 4. **Start the Server**
 ```bash
@@ -113,12 +147,22 @@ npm start
 
 Server will start on `http://localhost:5000`
 
-## 📖 Quick Documentation Links
+## 📖 Documentation
 
-- **🔲 [QR Implementation Guide](docs/QR_IMPLEMENTATION_GUIDE.md)** - Frontend team start here!
-- **🚀 [Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md)** - Executive overview
-- **📋 [Complete Documentation](docs/README.md)** - All guides organized
-- **🔧 [Troubleshooting](docs/GOOGLE_SHEETS_TROUBLESHOOTING.md)** - Common issues
+### **🚀 Getting Started**
+- **🔲 [QR Implementation Guide](docs/QR_IMPLEMENTATION_GUIDE.md)** - Frontend QR integration
+- **📁 [Google Drive Integration Guide](docs/GOOGLE_DRIVE_INTEGRATION_GUIDE.md)** - Google Drive setup
+- **🎯 [Implementation Summary](docs/IMPLEMENTATION_SUMMARY.md)** - Executive overview
+
+### **🔧 Development & Deployment**
+- **🚀 [Production Deployment Guide](docs/PRODUCTION_DEPLOYMENT_GUIDE.md)** - Production setup
+- **🎨 [Frontend Implementation Guide](docs/FRONTEND_IMPLEMENTATION_GUIDE.md)** - Frontend Google Drive integration
+- **📋 [Project Structure](docs/PROJECT_STRUCTURE.md)** - Code organization
+
+### **🆘 Support & Troubleshooting**
+- **🔧 [Google Sheets Troubleshooting](docs/GOOGLE_SHEETS_TROUBLESHOOTING.md)** - Common issues
+- **📊 [Quota Management](docs/QUOTA_MANAGEMENT.md)** - API limits
+- **🔐 [Auth0 Setup Guide](docs/AUTH0_SETUP_GUIDE.md)** - Authentication
 
 ## 🔄 Inventory Workflow
 
@@ -130,12 +174,28 @@ Server will start on `http://localhost:5000`
 4. **🖨️ Print & Distribute**: Print QR codes and attach to vehicles
 5. **📱 Scan QR Codes**: During inventory, scan QR codes to update records
 6. **✅ Complete Session**: Finish inventory session as usual
+7. **📁 Smart Download**: First download creates Google Drive backup, subsequent downloads use backup
+8. **🔄 Multiple Inventories**: Up to 2 inventories per month with unique session tracking and individual downloads
 
 ### **Legacy Barcode Process (Still Supported)**
 
 1. **📱 Scan Barcodes**: Scan 8-digit REPUVE barcodes
 2. **💾 Manual Entry**: Enter car details manually if needed
 3. **✅ Complete Session**: Finish inventory session
+
+### **Multiple Inventories Per Month**
+
+The system supports up to 2 inventories per month per location:
+
+1. **First Inventory**: Creates backup with session ID in filename
+2. **Second Inventory**: Creates separate backup with different session ID
+3. **Individual Downloads**: Each inventory can be downloaded separately using session ID
+4. **Automatic Cleanup**: Google Sheets data is cleared after each successful backup
+5. **Smart Fallback**: If specific session not found, downloads most recent inventory
+
+**Example Filenames:**
+- `2025-09-23_Alfa Romeo_September_2025_54300918.csv` (First inventory)
+- `2025-09-23_Alfa Romeo_September_2025_54357269.csv` (Second inventory)
 
 ### **Enhanced Data Storage**
 
@@ -320,6 +380,135 @@ Get list of available locations (agencies and bodegas).
 }
 ```
 
+### **10. Download Inventory (General)**
+**GET** `/api/download/inventory/:agency/:month/:year/csv`
+
+Download the most recent inventory file for a specific agency, month, and year.
+
+**Parameters:**
+- `agency`: Agency name (e.g., "Alfa Romeo", "Honda")
+- `month`: Month number (01-12)
+- `year`: Year (e.g., 2025)
+
+**Response:** CSV file download
+
+### **11. Download Specific Inventory (NEW)**
+**GET** `/api/download/inventory/:agency/:month/:year/csv/:sessionId`
+
+Download a specific inventory file by session ID. This allows downloading individual inventories when multiple exist per month.
+
+**Parameters:**
+- `agency`: Agency name (e.g., "Alfa Romeo", "Honda")
+- `month`: Month number (01-12)
+- `year`: Year (e.g., 2025)
+- `sessionId`: Session ID (e.g., "sess_1758654300918")
+
+**Response:** CSV file download
+
+**Example:**
+```
+GET /api/download/inventory/Alfa%20Romeo/09/2025/csv/sess_1758654300918
+```
+
+### **12. Store File on Google Drive**
+**POST** `/api/download/store/:agency/:month/:year/:type`
+
+Store an inventory file on Google Drive for long-term storage.
+
+**Parameters:**
+- `agency`: Agency name (e.g., "suzuki", "honda")
+- `month`: Month number (1-12)
+- `year`: Year (e.g., 2025)
+- `type`: File type ("csv" or "xlsx")
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "File stored successfully on Google Drive",
+  "data": {
+    "fileId": "1ABC123...",
+    "filename": "suzuki_1_2025_csv_2025-01-18T10-30-00-000Z.csv",
+    "downloadUrl": "https://drive.google.com/uc?export=download&id=1ABC123...",
+    "webViewLink": "https://drive.google.com/file/d/1ABC123.../view",
+    "size": 1024,
+    "expiresAt": "2025-02-17T10:30:00.000Z"
+  }
+}
+```
+
+### **11. Get Stored Files**
+**GET** `/api/download/stored/:agency/:month/:year`
+
+Retrieve all stored files for a specific agency/month/year.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Stored files retrieved successfully",
+  "data": {
+    "agency": "suzuki",
+    "month": "1",
+    "year": "2025",
+    "files": [
+      {
+        "fileId": "1ABC123...",
+        "filename": "suzuki_1_2025_csv_2025-01-18T10-30-00-000Z.csv",
+        "agency": "suzuki",
+        "month": "1",
+        "year": "2025",
+        "type": "csv",
+        "size": 1024,
+        "uploadedAt": "2025-01-18T10:30:00.000Z",
+        "expiresAt": "2025-02-17T10:30:00.000Z",
+        "downloadCount": 5,
+        "status": "Active"
+      }
+    ]
+  }
+}
+```
+
+### **12. Download Stored File**
+**GET** `/api/download/stored-file/:fileId`
+
+Download a specific file from Google Drive.
+
+**Parameters:**
+- `fileId`: Google Drive file ID
+
+**Response:** File download with appropriate headers
+
+### **13. Storage Statistics**
+**GET** `/api/download/storage-stats`
+
+Get comprehensive storage statistics.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Storage statistics retrieved successfully",
+  "data": {
+    "totalFiles": 150,
+    "activeFiles": 120,
+    "expiredFiles": 30,
+    "totalSize": 52428800,
+    "totalDownloads": 450,
+    "byAgency": {
+      "suzuki": 25,
+      "honda": 30,
+      "toyota": 20
+    },
+    "byType": {
+      "csv": 100,
+      "xlsx": 50
+    }
+  }
+}
+```
+
 ## 🧪 Testing
 
 ### **Test Health Check**
@@ -408,6 +597,8 @@ curl http://localhost:5000/api/inventory/monthly-inventory/Bodega%20Coyote/09/20
 | `NODE_ENV` | Environment mode | `development` |
 | `GOOGLE_SHEETS_CREDENTIALS_PATH` | Path to service account JSON | `./credentials/google-credentials.json` |
 | `GOOGLE_SHEETS_SPREADSHEET_ID` | Google Sheets spreadsheet ID | Required |
+| `GOOGLE_DRIVE_INVENTORY_FOLDER_ID` | Google Drive folder ID for files | `root` |
+| `GOOGLE_DRIVE_RETENTION_DAYS` | File retention period (days) | `30` |
 | `RATE_LIMIT_WINDOW_MS` | Rate limit window (ms) | `900000` (15 min) |
 | `RATE_LIMIT_MAX_REQUESTS` | Max requests per window | `100` |
 | `FRONTEND_URL` | Frontend URL for CORS | `http://localhost:3000` |
@@ -504,6 +695,9 @@ All comprehensive documentation is organized in the [`docs/`](docs/) folder:
 #### **🔐 Authentication & Security**
 - **[Auth0 Setup](docs/AUTH0_SETUP_GUIDE.md)** - Authentication configuration
 - **[Frontend Implementation](docs/FRONTEND_IMPLEMENTATION_GUIDE.md)** - Frontend security integration
+
+#### **☁️ Google Drive Integration**
+- **[Google Drive Integration](docs/GOOGLE_DRIVE_INTEGRATION.md)** - Complete Google Drive storage guide
 
 #### **📋 Documentation Index**
 - **[Complete Documentation Index](docs/README.md)** - Navigate all documentation

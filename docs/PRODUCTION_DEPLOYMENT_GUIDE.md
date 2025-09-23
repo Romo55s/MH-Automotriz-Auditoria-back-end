@@ -1,421 +1,539 @@
-# 🚀 Production Deployment Guide
+# Production Deployment Guide - Google Drive Integration
 
-This guide will help you deploy the Car Inventory Backend to production with proper security, monitoring, and configuration.
+## Overview
 
-## 📋 Prerequisites
+This guide covers deploying the Google Drive integration to production, including OAuth setup, environment configuration, and monitoring.
 
-- Node.js 18+ installed on production server
-- PM2 or similar process manager
-- SSL certificate for HTTPS
+## Prerequisites
+
+- Google Cloud Console access
+- Production server access
 - Domain name configured
-- Google Cloud Console project with Sheets API enabled
-- Auth0 account and application configured
+- SSL certificate installed
 
-## 🔧 Environment Configuration
+## Step 1: Google Cloud Console Configuration
 
-### 1. Environment Variables
+### 1.1 OAuth Consent Screen
 
-Create a `.env` file in your production directory with the following variables:
+1. **Go to Google Cloud Console**
+   - Navigate to [Google Cloud Console](https://console.cloud.google.com/)
+   - Select your project
+
+2. **Configure OAuth Consent Screen**
+   - Go to **APIs & Services** → **OAuth consent screen**
+   - Select **External** (if not already selected)
+   - Fill in required information:
+     - **App name**: `Car Inventory System - Production`
+     - **User support email**: `support@yourdomain.com`
+     - **Developer contact information**: `admin@yourdomain.com`
+
+3. **Add Scopes**
+   - Click **Add or Remove Scopes**
+   - Add: `https://www.googleapis.com/auth/drive.file`
+   - Click **Update**
+
+4. **Add Test Users**
+   - Add production admin emails
+   - Add any users who will access the system
+
+5. **Publish the App**
+   - Click **Publish App**
+   - **Important**: The app must be published, not just saved
+
+### 1.2 Create OAuth Client ID
+
+1. **Create Desktop Application Client**
+   - Go to **APIs & Services** → **Credentials**
+   - Click **Create Credentials** → **OAuth client ID**
+   - Select **Desktop Application**
+   - Name: `Car Inventory System - Production`
+   - Click **Create**
+
+2. **Download Credentials**
+   - Download the JSON file
+   - Rename to `google-drive-credentials.json`
+   - Upload to production server in `credentials/` folder
+
+### 1.3 Create API Key
+
+1. **Create API Key**
+   - Go to **APIs & Services** → **Credentials**
+   - Click **Create Credentials** → **API Key**
+   - Name: `MH-Automotriz-Production-Download`
+
+2. **Restrict API Key**
+   - Click **Restrict Key**
+   - **Application restrictions**: HTTP referrers
+   - Add your production domain: `https://yourdomain.com/*`
+   - **API restrictions**: Restrict to Google Drive API
+   - Click **Save**
+
+## Step 2: Generate Production OAuth Tokens
+
+### 2.1 Create Setup Script
+
+Create `scripts/setup-oauth-production.js`:
+
+```javascript
+const { google } = require('googleapis');
+const fs = require('fs');
+const readline = require('readline');
+
+async function setupProductionOAuth() {
+  try {
+    // Load credentials
+    const credentialsPath = './credentials/google-drive-credentials.json';
+    const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
+    
+    const oauth2Client = new google.auth.OAuth2(
+      credentials.installed.client_id,
+      credentials.installed.client_secret,
+      'urn:ietf:wg:oauth:2.0:oob'
+    );
+
+    // Generate auth URL
+    const authUrl = oauth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: ['https://www.googleapis.com/auth/drive.file']
+    });
+
+    console.log('🔗 Production OAuth Setup');
+    console.log('========================');
+    console.log('1. Visit this URL in your browser:');
+    console.log(authUrl);
+    console.log('\n2. Sign in with your production Google account');
+    console.log('3. Grant permissions to the application');
+    console.log('4. Copy the authorization code from the browser');
+    console.log('\nEnter the authorization code:');
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    const code = await new Promise((resolve) => {
+      rl.question('Authorization code: ', resolve);
+    });
+
+    rl.close();
+
+    // Exchange code for tokens
+    const { tokens } = await oauth2Client.getToken(code);
+    
+    console.log('\n✅ OAuth tokens generated successfully!');
+    console.log('\n📋 Add these to your production .env file:');
+    console.log('=====================================');
+    console.log(`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}`);
+    console.log(`GOOGLE_ACCESS_TOKEN=${tokens.access_token}`);
+    console.log(`GOOGLE_API_KEY=your_api_key_here`);
+    console.log(`GOOGLE_DRIVE_INVENTORY_FOLDER_ID=your_folder_id_here`);
+    console.log(`GOOGLE_DRIVE_RETENTION_DAYS=30`);
+    console.log(`GOOGLE_DRIVE_CREDENTIALS_PATH=./credentials/google-drive-credentials.json`);
+
+  } catch (error) {
+    console.error('❌ Error setting up OAuth:', error.message);
+    process.exit(1);
+  }
+}
+
+setupProductionOAuth();
+```
+
+### 2.2 Run Setup Script
 
 ```bash
-# Application
+# Run the production OAuth setup
+node scripts/setup-oauth-production.js
+
+# Follow the prompts to get tokens
+# Copy the generated tokens to your production .env file
+```
+
+## Step 3: Production Environment Configuration
+
+### 3.1 Environment Variables
+
+Create/update your production `.env` file. You have two options for Google Drive credentials:
+
+#### **Option A: Base64 Encoded Credentials (Recommended for Production)**
+
+```env
+# Production Environment
 NODE_ENV=production
 PORT=5000
-HOST=0.0.0.0
 
-# Google Sheets API
+# Google Drive Configuration
+GOOGLE_DRIVE_INVENTORY_FOLDER_ID=your_production_folder_id
+GOOGLE_DRIVE_RETENTION_DAYS=30
+
+# Google Drive OAuth (Base64 encoded - recommended for production)
+GOOGLE_DRIVE_CREDENTIALS_BASE64=eyJ0eXBlIjoic2VydmljZV9hY2NvdW50Iiwi...
+
+# OAuth Tokens (from setup script)
+GOOGLE_REFRESH_TOKEN=your_production_refresh_token
+GOOGLE_ACCESS_TOKEN=your_production_access_token
+
+# API Key (from Google Cloud Console)
+GOOGLE_API_KEY=your_production_api_key
+```
+
+#### **Option B: File Path Credentials (Alternative)**
+
+```env
+# Production Environment
+NODE_ENV=production
+PORT=5000
+
+# Google Drive Configuration
+GOOGLE_DRIVE_INVENTORY_FOLDER_ID=your_production_folder_id
+GOOGLE_DRIVE_RETENTION_DAYS=30
+GOOGLE_DRIVE_CREDENTIALS_PATH=./credentials/google-drive-credentials.json
+
+# OAuth Tokens (from setup script)
+GOOGLE_REFRESH_TOKEN=your_production_refresh_token
+GOOGLE_ACCESS_TOKEN=your_production_access_token
+
+# API Key (from Google Cloud Console)
+GOOGLE_API_KEY=your_production_api_key
+```
+
+#### **How to Generate Base64 Credentials:**
+
+1. **Run the encoding script:**
+```bash
+node scripts/encode-google-drive-credentials.js
+```
+
+2. **Copy the generated base64 string** to your production environment variables
+
+3. **Benefits of Base64 approach:**
+   - No need to upload JSON files to production server
+   - More secure (credentials stored as environment variable)
+   - Easier to manage in cloud platforms
+   - No file path dependencies
+
+# Google Sheets (existing)
 GOOGLE_SHEETS_SPREADSHEET_ID=your_production_spreadsheet_id
-GOOGLE_APPLICATION_CREDENTIALS=./credentials/google-credentials.json
+GOOGLE_SHEETS_CREDENTIALS_PATH=./credentials/google-credentials.json
 
-# Auth0 Configuration
-AUTH0_DOMAIN=your-domain.auth0.com
-AUTH0_AUDIENCE=your-api-identifier
-AUTH0_ISSUER=https://your-domain.auth0.com/
+# Database (if applicable)
+DATABASE_URL=your_production_database_url
 
-# Rate Limiting (Production Settings)
-RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX_REQUESTS=100
-
-# CORS Configuration
-CORS_ORIGIN=https://your-frontend-domain.com
+# Security
+JWT_SECRET=your_production_jwt_secret
+CORS_ORIGIN=https://yourdomain.com
 
 # Logging
 LOG_LEVEL=info
 ```
 
-### 2. Google Sheets Setup
+### 3.2 File Structure
 
-1. **Create Production Spreadsheet**:
-   - Create a new Google Spreadsheet for production
-   - Copy the spreadsheet ID from the URL
-   - Update `GOOGLE_SHEETS_SPREADSHEET_ID` in your `.env`
+Ensure your production server has this structure:
 
-2. **Service Account Setup**:
-   - Create a new service account in Google Cloud Console
-   - Download the JSON credentials file
-   - Place it in `./credentials/google-credentials.json`
-   - Share the spreadsheet with the service account email
+```
+/var/www/car-inventory-backend/
+├── credentials/
+│   ├── google-drive-credentials.json
+│   └── google-credentials.json
+├── src/
+├── docs/
+├── scripts/
+├── .env
+├── package.json
+└── ecosystem.config.js
+```
 
-3. **Sheet Structure**:
-   - The system will automatically create required sheets:
-     - `MonthlySummary` (with headers)
-     - Agency-specific sheets (created on first scan)
+## Step 4: Create Google Drive Folder Structure
 
-### 3. Auth0 Configuration
+### 4.1 Create Main Folder
 
-#### Production Application Setup:
-1. **Create Auth0 Application**:
-   - Go to Auth0 Dashboard → Applications
-   - Create new "Single Page Application"
-   - Note the Domain and Client ID
+1. **Create Main Inventory Folder**
+   - Go to [Google Drive](https://drive.google.com)
+   - Create a new folder: `Car Inventory Backups`
+   - Copy the folder ID from the URL
+   - Add to `.env` as `GOOGLE_DRIVE_INVENTORY_FOLDER_ID`
 
-2. **API Configuration**:
-   - Go to APIs section
-   - Create new API or use existing
-   - Set Identifier (this becomes your `AUTH0_AUDIENCE`)
-   - Enable RBAC and Add Permissions in Access Token
+2. **Set Folder Permissions**
+   - Right-click the folder → **Share**
+   - Add your production Google account
+   - Set permissions to **Editor**
 
-3. **Environment Variables**:
-   ```bash
-   AUTH0_DOMAIN=your-domain.auth0.com
-   AUTH0_AUDIENCE=https://your-api-identifier
-   AUTH0_ISSUER=https://your-domain.auth0.com/
-   ```
-
-4. **CORS Configuration**:
-   - Add your frontend domain to allowed origins
-   - Update `CORS_ORIGIN` in your `.env`
-
-## 🚀 Deployment Steps
-
-### 1. Server Setup
+### 4.2 Test Folder Creation
 
 ```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
+# Test that the system can create agency folders
+curl -X GET "https://yourdomain.com/api/download/stored-files/TestAgency"
+```
 
-# Install Node.js 18+
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
+## Step 5: Deploy Application
 
+### 5.1 Using PM2 (Recommended)
+
+```bash
 # Install PM2 globally
-sudo npm install -g pm2
+npm install -g pm2
 
-# Create application directory
-sudo mkdir -p /var/www/car-inventory-backend
-sudo chown $USER:$USER /var/www/car-inventory-backend
-cd /var/www/car-inventory-backend
-```
-
-### 2. Application Deployment
-
-```bash
-# Clone repository
-git clone https://github.com/your-username/car-inventory-backend.git .
-
-# Install dependencies
-npm ci --only=production
-
-# Create credentials directory
-mkdir -p credentials
-
-# Copy your Google credentials file
-cp /path/to/your/google-credentials.json ./credentials/
-
-# Create production .env file
-cp .env.example .env
-# Edit .env with your production values
-nano .env
-
-# Set proper permissions
-chmod 600 .env
-chmod 600 credentials/google-credentials.json
-```
-
-### 3. PM2 Configuration
-
-Create `ecosystem.config.js`:
-
-```javascript
-module.exports = {
-  apps: [{
-    name: 'car-inventory-backend',
-    script: 'src/index.js',
-    instances: 'max',
-    exec_mode: 'cluster',
-    env: {
-      NODE_ENV: 'development'
-    },
-    env_production: {
-      NODE_ENV: 'production',
-      PORT: 5000
-    },
-    error_file: './logs/err.log',
-    out_file: './logs/out.log',
-    log_file: './logs/combined.log',
-    time: true,
-    max_memory_restart: '1G',
-    node_args: '--max-old-space-size=1024'
-  }]
-};
-```
-
-### 4. Start Application
-
-```bash
-# Create logs directory
-mkdir -p logs
-
-# Start with PM2
+# Start application with PM2
 pm2 start ecosystem.config.js --env production
 
 # Save PM2 configuration
 pm2 save
 
-# Setup PM2 to start on boot
+# Setup PM2 startup script
 pm2 startup
-# Follow the instructions provided by PM2
 ```
 
-## 🔒 Security Configuration
+### 5.2 Using Docker
 
-### 1. Firewall Setup
+```dockerfile
+# Dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+COPY . .
+
+EXPOSE 5000
+
+CMD ["node", "src/index.js"]
+```
 
 ```bash
-# Allow SSH, HTTP, and HTTPS
-sudo ufw allow ssh
-sudo ufw allow 80
-sudo ufw allow 443
-sudo ufw enable
+# Build and run
+docker build -t car-inventory-backend .
+docker run -d --name car-inventory -p 5000:5000 --env-file .env car-inventory-backend
 ```
 
-### 2. Nginx Configuration
+### 5.3 Using Systemd
 
-Create `/etc/nginx/sites-available/car-inventory-backend`:
+Create `/etc/systemd/system/car-inventory.service`:
 
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-    return 301 https://$server_name$request_uri;
-}
+```ini
+[Unit]
+Description=Car Inventory Backend
+After=network.target
 
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com;
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/car-inventory-backend
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=10
+Environment=NODE_ENV=production
+EnvironmentFile=/var/www/car-inventory-backend/.env
 
-    ssl_certificate /path/to/your/certificate.crt;
-    ssl_certificate_key /path/to/your/private.key;
-    
-    # SSL configuration
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-
-    # Security headers
-    add_header X-Frame-Options DENY;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-    # Rate limiting
-    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
-    limit_req zone=api burst=20 nodelay;
-
-    location / {
-        proxy_pass http://localhost:5000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-        
-        # Timeout settings
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-
-    # Health check endpoint
-    location /health {
-        access_log off;
-        proxy_pass http://localhost:5000/health;
-    }
-}
+[Install]
+WantedBy=multi-user.target
 ```
-
-Enable the site:
-```bash
-sudo ln -s /etc/nginx/sites-available/car-inventory-backend /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-## 📊 Monitoring & Logging
-
-### 1. PM2 Monitoring
 
 ```bash
-# Monitor application
-pm2 monit
+# Enable and start service
+sudo systemctl enable car-inventory
+sudo systemctl start car-inventory
+sudo systemctl status car-inventory
+```
 
-# View logs
+## Step 6: Monitoring and Logging
+
+### 6.1 Application Logs
+
+```bash
+# PM2 logs
 pm2 logs car-inventory-backend
 
-# Restart application
-pm2 restart car-inventory-backend
+# Systemd logs
+sudo journalctl -u car-inventory -f
 
-# Stop application
-pm2 stop car-inventory-backend
+# Docker logs
+docker logs -f car-inventory
 ```
 
-### 2. Log Rotation
+### 6.2 Health Check Endpoint
 
-Create `/etc/logrotate.d/car-inventory-backend`:
+```bash
+# Test health endpoint
+curl https://yourdomain.com/health
 
-```
-/var/www/car-inventory-backend/logs/*.log {
-    daily
-    missingok
-    rotate 30
-    compress
-    delaycompress
-    notifempty
-    create 644 www-data www-data
-    postrotate
-        pm2 reloadLogs
-    endscript
-}
-```
-
-### 3. Health Check
-
-The application includes a health check endpoint at `/health` that returns:
-```json
+# Expected response
 {
-  "status": "healthy",
-  "timestamp": "2025-01-XX...",
-  "uptime": 12345,
+  "status": "OK",
+  "timestamp": "2025-09-23T15:30:00.000Z",
+  "uptime": 3600,
   "environment": "production"
 }
 ```
 
-## 🔄 CI/CD Pipeline
+### 6.3 Google Drive Integration Test
 
-### GitHub Actions Example
-
-Create `.github/workflows/deploy.yml`:
-
-```yaml
-name: Deploy to Production
-
-on:
-  push:
-    branches: [ main ]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Deploy to server
-      uses: appleboy/ssh-action@v0.1.5
-      with:
-        host: ${{ secrets.HOST }}
-        username: ${{ secrets.USERNAME }}
-        key: ${{ secrets.SSH_KEY }}
-        script: |
-          cd /var/www/car-inventory-backend
-          git pull origin main
-          npm ci --only=production
-          pm2 restart car-inventory-backend
-```
-
-## 🧪 Testing Production Setup
-
-### 1. Health Check
 ```bash
-curl https://your-domain.com/health
+# Test Google Drive connection
+curl -X GET "https://yourdomain.com/api/download/stored-files/TestAgency"
+
+# Expected response
+{
+  "success": true,
+  "agency": "TestAgency",
+  "files": [],
+  "count": 0
+}
 ```
 
-### 2. API Endpoints Test
+## Step 7: Security Considerations
+
+### 7.1 Environment Variables Security
+
+- Never commit `.env` files to version control
+- Use environment variable management tools
+- Rotate credentials regularly
+- Use different credentials for different environments
+
+### 7.2 API Key Security
+
+- Restrict API key to specific domains
+- Monitor API key usage
+- Set up alerts for unusual activity
+- Rotate API keys periodically
+
+### 7.3 OAuth Token Security
+
+- Store tokens securely
+- Implement token refresh logic
+- Monitor for token expiration
+- Use HTTPS for all communications
+
+## Step 8: Backup and Recovery
+
+### 8.1 Application Backup
+
 ```bash
-# Test with proper authentication
-curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-     https://your-domain.com/api/inventory/monthly-inventory/TestAgency/01/2025
+# Backup application files
+tar -czf car-inventory-backup-$(date +%Y%m%d).tar.gz \
+  /var/www/car-inventory-backend \
+  --exclude=node_modules \
+  --exclude=temp
+
+# Backup environment configuration
+cp .env .env.backup.$(date +%Y%m%d)
 ```
 
-### 3. Google Sheets Integration
-- Verify service account has access to spreadsheet
-- Test a scan operation to ensure sheets are created properly
+### 8.2 Google Drive Backup
 
-## 🚨 Troubleshooting
+- Google Drive files are automatically backed up by Google
+- Monitor storage usage
+- Set up alerts for storage limits
+- Regular cleanup of expired files
 
-### Common Issues:
+## Step 9: Performance Optimization
 
-1. **Google Sheets API Errors**:
-   - Check service account permissions
-   - Verify spreadsheet ID is correct
-   - Ensure credentials file is properly formatted
+### 9.1 Caching
 
-2. **Auth0 Issues**:
-   - Verify domain and audience settings
-   - Check CORS configuration
-   - Ensure JWT tokens are properly formatted
-
-3. **Rate Limiting**:
-   - Adjust `RATE_LIMIT_MAX_REQUESTS` if needed
-   - Monitor logs for 429 errors
-
-4. **Memory Issues**:
-   - Increase `max_memory_restart` in PM2 config
-   - Monitor with `pm2 monit`
-
-## 📈 Performance Optimization
-
-### 1. Database Optimization
-- Google Sheets API has quotas - monitor usage
-- Implement proper caching for frequently accessed data
-- Use batch operations when possible
-
-### 2. Application Optimization
-- Enable gzip compression in Nginx
+- Implement Redis for session caching
+- Cache Google Drive API responses
 - Use CDN for static assets
-- Implement proper error handling and logging
 
-### 3. Monitoring
-- Set up alerts for application downtime
-- Monitor API response times
-- Track Google Sheets API quota usage
+### 9.2 Database Optimization
 
-## 🔐 Security Checklist
+- Index frequently queried fields
+- Optimize Google Sheets API calls
+- Implement connection pooling
 
-- [ ] HTTPS enabled with valid SSL certificate
-- [ ] Environment variables properly secured
-- [ ] Google credentials file has restricted permissions (600)
-- [ ] Firewall configured to only allow necessary ports
-- [ ] Auth0 properly configured with correct domains
-- [ ] Rate limiting enabled and configured
-- [ ] Security headers implemented in Nginx
-- [ ] Log rotation configured
-- [ ] Regular security updates scheduled
-- [ ] Backup strategy implemented
+### 9.3 Monitoring
 
-## 📞 Support
+- Set up application performance monitoring
+- Monitor Google Drive API quotas
+- Track download/upload metrics
+- Set up alerts for errors
 
-For issues or questions:
-1. Check application logs: `pm2 logs car-inventory-backend`
+## Step 10: Troubleshooting
+
+### 10.1 Common Issues
+
+#### OAuth Token Expired
+```bash
+# Check token status
+curl -H "Authorization: Bearer $GOOGLE_ACCESS_TOKEN" \
+  "https://www.googleapis.com/oauth2/v1/tokeninfo"
+
+# Regenerate tokens if needed
+node scripts/setup-oauth-production.js
+```
+
+#### API Key Issues
+```bash
+# Test API key
+curl "https://www.googleapis.com/drive/v3/files?key=$GOOGLE_API_KEY"
+```
+
+#### Google Drive Permissions
+- Verify folder permissions
+- Check OAuth consent screen status
+- Ensure app is published
+
+### 10.2 Debug Commands
+
+```bash
+# Test Google Drive connection
+node -e "
+const { OAuthGoogleDrive } = require('./src/services/oauthGoogleDrive');
+const drive = new OAuthGoogleDrive();
+drive.initialize().then(() => {
+  console.log('✅ Google Drive connection successful');
+}).catch(err => {
+  console.error('❌ Google Drive connection failed:', err.message);
+});
+"
+
+# Test file operations
+curl -X GET "https://yourdomain.com/api/download/stored-files/TestAgency"
+```
+
+## Step 11: Maintenance
+
+### 11.1 Regular Tasks
+
+- **Daily**: Check application logs
+- **Weekly**: Monitor Google Drive storage usage
+- **Monthly**: Review and rotate credentials
+- **Quarterly**: Update dependencies and security patches
+
+### 11.2 Monitoring Alerts
+
+Set up alerts for:
+- Application downtime
+- Google Drive API errors
+- Storage quota exceeded
+- Unusual download patterns
+- Authentication failures
+
+## Support
+
+For production deployment issues:
+
+1. Check application logs
 2. Verify environment configuration
-3. Test individual components (Auth0, Google Sheets)
-4. Check server resources and connectivity
+3. Test Google Drive connectivity
+4. Review security settings
+5. Contact the development team with specific error messages and logs
 
----
+## Rollback Plan
 
-**Remember**: Always test your production setup in a staging environment first!
+If issues occur:
+
+1. **Immediate**: Revert to previous version
+2. **Short-term**: Disable Google Drive integration
+3. **Long-term**: Fix issues and redeploy
+
+```bash
+# Rollback to previous version
+pm2 stop car-inventory-backend
+pm2 start ecosystem.config.js --env production --revert
+
+# Or disable Google Drive integration temporarily
+export GOOGLE_DRIVE_ENABLED=false
+pm2 restart car-inventory-backend
+```

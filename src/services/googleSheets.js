@@ -61,10 +61,13 @@ class GoogleSheetsService {
         throw new Error('Neither GOOGLE_CREDENTIALS_BASE64 nor GOOGLE_SHEETS_CREDENTIALS_PATH environment variable is set');
       }
       
-      this.auth = new google.auth.GoogleAuth({
-        credentials,
-        scopes: ['https://www.googleapis.com/auth/spreadsheets']
-      });
+    this.auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive.file'
+      ]
+    });
 
       this.sheets = google.sheets({ version: 'v4', auth: this.auth });
       this.initialized = true;

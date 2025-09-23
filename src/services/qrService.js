@@ -110,7 +110,7 @@ class QRService {
     return JSON.stringify(qrData);
   }
 
-  // Generate enhanced QR code image with car information and 5x5 cm size
+  // Generate 5x5cm QR code with super big QR and small text
   async generateQRCodeImage(data, filename, carInfo, targetDir = null) {
     try {
       // Use provided directory or default temp directory
@@ -120,62 +120,58 @@ class QRService {
       // Calculate size for 5x5 cm at 300 DPI (print quality)
       // 5 cm = ~590 pixels at 300 DPI
       const canvasSize = 590; // 5x5 cm at 300 DPI
-      const qrSize = 495; // Bigger QR code size within the canvas
-      const margin = 18;
+      const qrSize = 560; // Much bigger QR code to match your mockup
+      const margin = 20;
+      const textHeight = 40; // Smaller space for text
+      const totalWidth = canvasSize;
+      const totalHeight = canvasSize;
       
-      // Create canvas
-      const canvas = createCanvas(canvasSize, canvasSize);
-      const ctx = canvas.getContext('2d');
-      
-      // Fill background with white
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillRect(0, 0, canvasSize, canvasSize);
-      
-      // Generate QR code as buffer
+      // Generate QR code (clean format like your example)
       const qrBuffer = await QRCode.toBuffer(data, {
         type: 'png',
         width: qrSize,
-        margin: 1,
+        margin: 4,  // Standard quiet zone like your example
         color: {
-          dark: '#000000',
-          light: '#FFFFFF'
-        }
+          dark: '#000000',  // Pure black
+          light: '#FFFFFF'  // Pure white
+        },
+        errorCorrectionLevel: 'M'
       });
       
       // Load QR code image
       const qrImage = await loadImage(qrBuffer);
       
-      // Calculate QR code position (centered, with minimal text space)
-      const textSpaceNeeded = 50; // Reduced space for text at bottom
-      const qrX = (canvasSize - qrSize) / 2;
-      const qrY = margin; // Position QR code near the top
+      // Create canvas for 5x5cm
+      const canvas = createCanvas(totalWidth, totalHeight);
+      const ctx = canvas.getContext('2d');
       
-      // Draw QR code
+      // Fill background with white
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, totalWidth, totalHeight);
+      
+      // Draw bigger QR code at the top (like your mockup)
+      const qrX = (canvasSize - qrSize) / 2; // Center horizontally
+      const qrY = margin; // Top margin
       ctx.drawImage(qrImage, qrX, qrY, qrSize, qrSize);
       
-      // Add text information below QR code (with better spacing)
-      const textStartY = qrY + qrSize + 15; // Better gap for readability
-      const textX = canvasSize / 2;
+      // Add text below QR code in horizontal row (flex-row)
+      const textStartY = qrY + qrSize + 4; // Start text closer to QR
+      const textX = canvasSize / 2; // Center text
       
       // Configure text style
       ctx.fillStyle = '#000000';
       ctx.textAlign = 'center';
       
-      // Add car information with larger fonts
-      let currentY = textStartY;
-      const lineHeight = 22; // Increased line height for larger text
+      // Create horizontal layout: Serie | Marca-Color | Ubicaciones
+      const textY = textStartY;
+      const separator = ' | '; // Separator between items
       
-      // Serie (most important, larger and bold)
-      ctx.font = 'bold 26px Arial';
-      ctx.fillText(`${carInfo.serie}`, textX, currentY);
-      currentY += lineHeight + 2;
+      // Combine all text in one line
+      const fullText = `${carInfo.serie}${separator}${carInfo.marca} - ${carInfo.color}${separator}${carInfo.ubicaciones}`;
       
-      // Other information (larger fonts)
-      ctx.font = 'bold 18px Arial';
-      ctx.fillText(`${carInfo.marca} - ${carInfo.color}`, textX, currentY);
-      currentY += lineHeight;
-      ctx.font = '18px Arial';
-      ctx.fillText(`${carInfo.ubicaciones}`, textX, currentY);
+      // Draw the combined text
+      ctx.font = '14px Arial';
+      ctx.fillText(fullText, textX, textY);
       
       // Save the canvas as PNG
       const buffer = canvas.toBuffer('image/png');
@@ -183,7 +179,7 @@ class QRService {
       
       return qrImagePath;
     } catch (error) {
-      throw new Error(`Failed to generate enhanced QR code image: ${error.message}`);
+      throw new Error(`Failed to generate QR code image: ${error.message}`);
     }
   }
 
@@ -246,8 +242,8 @@ class QRService {
         `Session ID: ${sessionId}`,
         `Total QR Codes: ${qrCodePaths.length}`,
         `Size: 5x5 cm (590x590 pixels at 300 DPI)`,
-        `QR Code Size: 550x550 pixels (Large format for easy scanning)`,
-        `Features: Large QR Code + Compact Car Information Text`,
+        `QR Code Size: 560x560 pixels (Large format for easy scanning)`,
+        `Features: Large QR Code + Horizontal Car Information Text`,
         ``,
         `QR Code Details:`,
         `================`

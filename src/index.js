@@ -7,6 +7,7 @@ require('dotenv').config();
 
 const apiRoutes = require('./routes/api');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
+const cleanupScheduler = require('./services/cleanupScheduler');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -133,6 +134,7 @@ app.get('/health', (req, res) => {
 app.get('/health/detailed', async (req, res) => {
   try {
     const googleSheets = require('./services/googleSheets');
+    const googleDrive = require('./services/googleDrive');
     
     // Test Google Sheets connection
     let sheetsStatus = 'unknown';
@@ -141,6 +143,15 @@ app.get('/health/detailed', async (req, res) => {
       sheetsStatus = 'connected';
     } catch (error) {
       sheetsStatus = 'error';
+    }
+    
+    // Test Google Drive connection
+    let driveStatus = 'unknown';
+    try {
+      await googleDrive.ensureInitialized();
+      driveStatus = 'connected';
+    } catch (error) {
+      driveStatus = 'error';
     }
     
     const detailedHealth = {
@@ -155,7 +166,9 @@ app.get('/health/detailed', async (req, res) => {
       },
       services: {
         googleSheets: sheetsStatus,
-        auth0: process.env.AUTH0_DOMAIN ? 'configured' : 'not_configured'
+        googleDrive: driveStatus,
+        auth0: process.env.AUTH0_DOMAIN ? 'configured' : 'not_configured',
+        cleanupScheduler: cleanupScheduler.getStatus()
       },
       version: process.env.npm_package_version || '1.0.0',
       nodeVersion: process.version,
@@ -184,4 +197,12 @@ app.listen(PORT, () => {
   console.log(`🔒 Security: Helmet, CORS, Rate Limiting enabled`);
   console.log(`📝 Logging: Morgan enabled`);
   console.log(`🌐 Health check: http://localhost:${PORT}/health`);
+  
+  // Start cleanup scheduler (disabled - using Google Drive only)
+  // try {
+  //   cleanupScheduler.start();
+  //   console.log(`🧹 Cleanup scheduler started`);
+  // } catch (error) {
+  //   console.error(`❌ Failed to start cleanup scheduler:`, error);
+  // }
 });

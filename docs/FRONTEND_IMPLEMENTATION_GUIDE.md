@@ -1,428 +1,411 @@
-# Frontend Implementation Guide
+# Frontend Implementation Guide - Google Drive Integration
 
-## Overview
-This guide provides instructions for implementing the new inventory management features in the frontend application. The backend has been updated with new endpoints and functionality for inventory session enforcement, data deletion, and file downloads.
+## 📋 Overview
 
-## Important: New Route Structure
-The API routes have been refactored into separate modules for better organization and performance. All endpoints now use a structured path format:
+This guide explains how to implement the Google Drive integration in the frontend application.
 
-- **Inventory Routes**: `/api/inventory/*`
-- **Download Routes**: `/api/download/*`
-- **Validation Routes**: `/api/validation/*`
+## 🔄 Changes Required
 
-**⚠️ Breaking Change**: All existing frontend API calls must be updated to use the new endpoint structure.
+### 1. Update API Endpoints
 
-## Route Migration Guide
-
-### Common Endpoint Changes
-| Old Endpoint | New Endpoint |
-|--------------|--------------|
-| `POST /api/save-scan` | `POST /api/inventory/save-scan` |
-| `POST /api/finish-session` | `POST /api/inventory/finish-session` |
-| `GET /api/monthly-inventory/:agency/:month/:year` | `GET /api/inventory/monthly-inventory/:agency/:month/:year` |
-| `GET /api/agency-inventories/:agency` | `GET /api/inventory/agency-inventories/:agency` |
-| `GET /api/check-monthly-inventory/:agency/:month/:year` | `GET /api/inventory/check-monthly-inventory/:agency/:month/:year` |
-| `GET /api/duplicate-barcodes/:agency/:month/:year` | `GET /api/inventory/duplicate-barcodes/:agency/:month/:year` |
-| `GET /api/scan-count/:agency/:month/:year` | `GET /api/inventory/scan-count/:agency/:month/:year` |
-| `DELETE /api/delete-scanned-entry` | `DELETE /api/inventory/delete-scanned-entry` |
-| `DELETE /api/delete-multiple` | `DELETE /api/inventory/delete-multiple` |
-| `GET /api/inventory-data/:agency/:month/:year` | `GET /api/inventory/inventory-data/:agency/:month/:year` |
-| `GET /api/check-inventory-limits/:agency/:month/:year` | `GET /api/inventory/check-inventory-limits/:agency/:month/:year` |
-| `GET /api/download-inventory/:agency/:month/:year/csv` | `GET /api/download/inventory/:agency/:month/:year/csv` |
-| `GET /api/download-inventory/:agency/:month/:year/excel` | `GET /api/download/inventory/:agency/:month/:year/excel` |
-| `GET /api/validate-monthly-summary` | `GET /api/validation/monthly-summary` |
-| `GET /api/validate-monthly-summary/:agency/:month/:year` | `GET /api/validation/monthly-summary/:agency/:month/:year` |
-| `POST /api/cleanup-duplicates` | `POST /api/validation/cleanup-duplicates` |
-| `POST /api/cleanup-specific-duplicates` | `POST /api/validation/cleanup-specific-duplicates` |
-
-### Quick Migration Examples
+**❌ OLD Endpoints (Remove these):**
 ```javascript
-// OLD - Update these in your frontend code
-const response = await fetch('/api/save-scan', { ... });
-const response = await fetch('/api/download-inventory/agency/12/2024/csv');
-const response = await fetch('/api/validate-monthly-summary');
-
-// NEW - Use these updated endpoints
-const response = await fetch('/api/inventory/save-scan', { ... });
-const response = await fetch('/api/download/inventory/agency/12/2024/csv');
-const response = await fetch('/api/validation/monthly-summary');
+// Remove these old backup endpoints
+POST /api/inventory/backup/:agency/:month/:year/csv
+GET /api/download/backup/:agency/:month/:year/csv
 ```
 
-## New Backend Features Implemented
-
-### 1. Inventory Session Enforcement
-- **Limit**: Maximum 2 inventories per month per agency
-- **Active Limit**: Only 1 active inventory per month per agency (multiple users can add scans to the same active inventory)
-- **Enforcement**: Automatically checked before starting new inventory sessions
-- **Multi-User Support**: Multiple users can scan barcodes to the same active inventory until it's completed
-
-### 2. Delete Scanned Data
-- **Functionality**: Delete individual scanned entries from Google Sheets
-- **Use Case**: Remove mistakenly scanned barcodes
-
-### 3. Download & Delete Inventory Data
-- **Formats**: CSV and Excel file downloads
-- **Auto-cleanup**: Data is automatically deleted from Google Sheets after successful download
-
-## New API Endpoints
-
-### 1. Check Inventory Limits
-```
-GET /api/inventory/check-inventory-limits/:agency/:month/:year
-```
-**Response:**
-```json
-{
-  "canStart": true,
-  "currentMonthCount": 1,
-  "activeCount": 0
-}
-```
-
-### 2. Delete Scanned Entry
-```
-DELETE /api/inventory/delete-scanned-entry
-```
-**Request Body:**
-```json
-{
-  "agency": "AgencyName",
-  "barcode": "123456789"
-}
-```
-
-### 3. Get Inventory Data
-```
-GET /api/inventory/inventory-data/:agency/:month/:year
-```
-**Response:**
-```json
-{
-  "agency": "AgencyName",
-  "month": "December",
-  "year": "2024",
-  "totalScans": 150,
-  "status": "Completed",
-  "createdAt": "December 1, 2024 at 9:00:00 AM",
-  "completedAt": "December 15, 2024 at 5:30:00 PM",
-  "scans": [
-    {
-      "date": "Dec 1, 2024",
-      "barcode": "123456789"
-    }
-  ]
-}
-```
-
-### 4. Download CSV
-```
+**✅ NEW Endpoints (Use these):**
+```javascript
+// Main download endpoint - handles both first-time and subsequent downloads
 GET /api/download/inventory/:agency/:month/:year/csv
-```
-**Response:** File download (CSV format)
-
-### 5. Download Excel
-```
 GET /api/download/inventory/:agency/:month/:year/excel
+
+// Specific inventory download by session ID (for multiple inventories per month)
+GET /api/download/inventory/:agency/:month/:year/csv/:sessionId
+
+// Google Drive management endpoints
+GET /api/download/stored-files/:agency          // List files for an agency
+GET /api/download/stored-file/:fileId           // Download specific file by ID
 ```
-**Response:** File download (Excel format)
 
-## Frontend Implementation Requirements
+### 2. Update Download Logic
 
-### 1. Inventory Session Enforcement UI
-
-#### Before Starting New Inventory
-Add a check before allowing users to start a new inventory:
-
+**Current Implementation:**
 ```javascript
-// Check inventory limits before starting
-const checkInventoryLimits = async (agency, month, year) => {
+// OLD - Manual backup call
+const downloadInventory = async (agency, month, year, type) => {
   try {
-    const response = await fetch(`/api/inventory/check-inventory-limits/${agency}/${month}/${year}`);
-    const result = await response.json();
+    // Download file
+    const response = await apiRequest(`/api/download/inventory/${agency}/${month}/${year}/${type}`);
     
-    if (!result.canStart) {
-      // Show error message to user
-      showErrorMessage('Cannot start inventory: ' + result.message);
-      return false;
-    }
+    // Manual backup call (REMOVE THIS)
+    await apiRequest(`/api/inventory/backup/${agency}/${month}/${year}/${type}`, 'POST');
     
-    return true;
+    return response;
   } catch (error) {
-    console.error('Error checking inventory limits:', error);
-    return false;
+    console.error('Download failed:', error);
+    throw error;
   }
 };
 ```
 
-#### UI Components Needed:
-- **Warning Messages**: Display when monthly limit is reached (2/2 inventories)
-- **Status Indicators**: Show current month count (e.g., "1/2 inventories this month")
-- **Active Inventory Info**: Show current active inventory status and allow continued scanning
-- **Multi-User Support**: Allow multiple users to scan to the same active inventory
-
-### 2. Delete Scanned Data UI
-
-#### Delete Button for Each Scan Entry
-Add a delete button next to each scanned entry in the inventory list:
-
+**New Implementation:**
 ```javascript
-// Delete scanned entry
-const deleteScannedEntry = async (agency, barcode) => {
-  if (!confirm('Are you sure you want to delete this scanned entry?')) {
-    return;
-  }
-  
+// NEW - Smart download flow (no changes needed to download logic)
+const downloadInventory = async (agency, month, year, type) => {
   try {
-    const response = await fetch('/api/inventory/delete-scanned-entry', {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        agency,
-        barcode
-      })
-    });
+    // Download file - handles both first-time and subsequent downloads automatically
+    const response = await apiRequest(`/api/download/inventory/${agency}/${month}/${year}/${type}`);
     
-    const result = await response.json();
+    // Backend automatically:
+    // - First download: Generates CSV → Stores backup → Clears Google Sheets
+    // - Subsequent downloads: Downloads from Google Drive backup
     
-    if (result.success) {
-      // Remove entry from UI
-      removeEntryFromList(barcode);
-      // Update scan count
-      updateScanCount();
-      showSuccessMessage('Entry deleted successfully');
-    }
+    return response;
   } catch (error) {
-    console.error('Error deleting entry:', error);
-    showErrorMessage('Failed to delete entry');
+    console.error('Download failed:', error);
+    throw error;
   }
 };
 ```
 
-#### UI Components Needed:
-- **Delete Button**: Small trash icon next to each scan entry
-- **Confirmation Dialog**: "Are you sure?" confirmation
-- **Success/Error Messages**: Feedback for user actions
-- **Real-time Updates**: Remove deleted entries from the list immediately
+### 3. Remove Backup UI Elements
 
-### 2.1. Multiple Delete Scanned Entries
+**Remove these UI elements:**
+- Backup buttons
+- Backup status indicators
+- Manual backup triggers
+- Backup confirmation modals
 
-#### API Endpoint
+**Keep these UI elements:**
+- Download buttons (CSV/Excel)
+- Download progress indicators
+- Download success/error messages
+
+### 4. Handle Multiple Inventories Per Month
+
+**❌ OLD WAY (Always downloads most recent):**
 ```javascript
-// Delete multiple scanned entries
-const deleteMultipleScannedEntries = async (data: {
-  agency: string;
-  barcodes: string[];
-}) => {
-  return apiRequest('/inventory/delete-multiple', {
-    method: 'DELETE',
-    body: JSON.stringify(data),
+// DON'T USE THIS - always downloads the most recent inventory
+const downloadInventory = async (agency, month, year, type) => {
+  const response = await apiRequest(`/api/download/inventory/${agency}/${month}/${year}/${type}`);
+  return response;
+};
+```
+
+**✅ NEW WAY (Downloads specific inventory by session ID):**
+```javascript
+// Download specific inventory by session ID
+const downloadSpecificInventory = async (agency, month, year, sessionId, type = 'csv') => {
+  try {
+    const response = await apiRequest(`/api/download/inventory/${agency}/${month}/${year}/${type}/${sessionId}`);
+    
+    // Backend automatically finds the correct file by session ID
+    // Falls back to most recent if specific session not found
+    
+    return response;
+  } catch (error) {
+    console.error('Specific inventory download failed:', error);
+    throw error;
+  }
+};
+
+// Example usage in React component
+const handleDownloadInventory = async (inventory) => {
+  try {
+    await downloadSpecificInventory(
+      inventory.agency,
+      inventory.month,
+      inventory.year,
+      inventory.sessionId, // Use the session ID from inventory data
+      'csv'
+    );
+    
+    showSuccessMessage(`Downloaded inventory: ${inventory.sessionId}`);
+  } catch (error) {
+    showErrorMessage('Download failed: ' + error.message);
+  }
+};
+```
+
+**Updated Inventory List Component:**
+```javascript
+// Inventory card component
+const InventoryCard = ({ inventory }) => {
+  const handleDownload = () => {
+    downloadSpecificInventory(
+      inventory.agency,
+      inventory.month,
+      inventory.year,
+      inventory.sessionId,
+      'csv'
+    );
+  };
+
+  return (
+    <div className="inventory-card">
+      <div className="inventory-info">
+        <h3>{inventory.month} {inventory.year} - {inventory.totalScans} códigos</h3>
+        <p>por {inventory.userName}</p>
+        <p>Completado: {inventory.completedAt}</p>
+        <p>Tiempo restante: {inventory.timeRemaining}</p>
+      </div>
+      <button onClick={handleDownload} className="download-btn">
+        Descargar
+      </button>
+    </div>
+  );
+};
+```
+
+### 5. Multiple Inventories Implementation (COMPLETED)
+
+**✅ Working Solution:**
+
+The multiple inventories per month feature is now fully implemented and working. Here's the final implementation:
+
+**Frontend Download Function:**
+```javascript
+const downloadSpecificInventory = async (agency, month, year, sessionId, type = 'csv') => {
+  try {
+    const response = await apiRequest(`/api/download/inventory/${agency}/${month}/${year}/${type}/${sessionId}`);
+    return response;
+  } catch (error) {
+    console.error('Specific inventory download failed:', error);
+    throw error;
+  }
+};
+```
+
+**Inventory Card Component:**
+```javascript
+const InventoryCard = ({ inventory }) => {
+  const handleDownload = () => {
+    downloadSpecificInventory(
+      inventory.agency,
+      inventory.month,
+      inventory.year,
+      inventory.sessionId, // Key: Use session ID for specific downloads
+      'csv'
+    );
+  };
+
+  return (
+    <div className="inventory-card">
+      <h3>{inventory.month} {inventory.year} - {inventory.totalScans} códigos</h3>
+      <p>Session: {inventory.sessionId}</p>
+      <button onClick={handleDownload}>Descargar</button>
+    </div>
+  );
+};
+```
+
+**✅ Features Working:**
+- Multiple inventories per month (up to 2)
+- Unique session tracking
+- Individual downloads by session ID
+- Automatic Google Drive backups
+- Smart fallback to most recent
+- Clean Google Sheets after backup
+
+### 6. Update Error Handling
+
+**Add Google Drive error handling:**
+```javascript
+const downloadInventory = async (agency, month, year, type) => {
+  try {
+    const response = await apiRequest(`/api/download/inventory/${agency}/${month}/${year}/${type}`);
+    
+    // Show success message
+    showSuccessMessage('File downloaded and backed up successfully!');
+    
+    return response;
+  } catch (error) {
+    if (error.message.includes('Google Drive')) {
+      showWarningMessage('File downloaded but backup failed. Please contact support.');
+    } else {
+      showErrorMessage('Download failed: ' + error.message);
+    }
+    throw error;
+  }
+};
+```
+
+## 🎨 UI Changes
+
+### 1. Download Confirmation Modal
+
+**Update the modal text:**
+```jsx
+<DownloadConfirmationModal
+  title="Download Inventory"
+  message="This will download the inventory file. On first download, it will be automatically backed up to Google Drive and the data will be cleared from the system."
+  confirmText="Download"
+  onConfirm={handleDownload}
+/>
+```
+
+### 2. Success Messages
+
+**Update success messages:**
+```javascript
+const showDownloadSuccess = () => {
+  showToast({
+    type: 'success',
+    title: 'Download Complete',
+    message: 'File downloaded successfully. Backup to Google Drive handled automatically.'
   });
 };
 ```
 
-#### Frontend Implementation
+### 3. Error Messages
+
+**Add backup-specific error handling:**
 ```javascript
-// Delete multiple scanned entries
-const deleteMultipleEntries = async (agency, barcodes) => {
-  if (!confirm(`Are you sure you want to delete ${barcodes.length} scanned entries?`)) {
-    return;
-  }
-  
-  try {
-    const response = await fetch('/api/inventory/delete-multiple', {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        agency,
-        barcodes
-      })
+const handleDownloadError = (error) => {
+  if (error.message.includes('backup')) {
+    showToast({
+      type: 'warning',
+      title: 'Partial Success',
+      message: 'File downloaded but backup failed. Data will be cleared from system.'
     });
-    
-    const result = await response.json();
-    
-    if (result.success) {
-      // Remove entries from UI
-      barcodes.forEach(barcode => removeEntryFromList(barcode));
-      // Update scan count
-      updateScanCount();
-      showSuccessMessage(`Successfully deleted ${result.deletedEntries.length} entries`);
-      
-      // Show info about any entries that weren't found
-      if (result.notFound && result.notFound.length > 0) {
-        showWarningMessage(`${result.notFound.length} entries were not found: ${result.notFound.join(', ')}`);
-      }
-    }
-  } catch (error) {
-    console.error('Error deleting multiple entries:', error);
-    showErrorMessage('Failed to delete entries');
+  } else {
+    showToast({
+      type: 'error',
+      title: 'Download Failed',
+      message: error.message
+    });
   }
 };
 ```
 
-#### UI Components Needed:
-- **Select All Checkbox**: Select/deselect all entries
-- **Individual Checkboxes**: Select specific entries to delete
-- **Bulk Delete Button**: Delete all selected entries
-- **Selection Counter**: Show "X entries selected"
-- **Confirmation Dialog**: "Are you sure you want to delete X entries?"
-- **Progress Indicator**: Show deletion progress for large batches
-- **Success/Error Messages**: Detailed feedback about deletion results
+## 🔧 Implementation Steps
 
-### 3. Download & Delete Inventory Data UI
+### Step 1: Update API Calls
+1. Remove all calls to `/api/inventory/backup/*`
+2. Remove all calls to `/api/download/backup/*`
+3. Keep existing calls to `/api/download/inventory/*`
 
-#### Download Buttons
-Add download buttons for completed inventories:
+### Step 2: Update UI Components
+1. Remove backup-related buttons and modals
+2. Update download confirmation messages
+3. Add Google Drive error handling
 
-```javascript
-// Download inventory data
-const downloadInventory = async (agency, month, year, format) => {
-  try {
-    // Show loading indicator
-    showLoadingIndicator('Preparing download...');
-    
-    const response = await fetch(`/api/download/inventory/${agency}/${month}/${year}/${format}`);
-    
-    if (response.ok) {
-      // Create download link
-      const blob = await response.blob();
+### Step 3: Update State Management
+1. Remove backup-related state variables
+2. Remove backup-related actions/reducers
+3. Update download success handlers
+
+### Step 4: Test Integration
+1. Test download functionality
+2. Verify automatic backup works
+3. Test error handling scenarios
+
+## 📱 Example Implementation
+
+### Download Component
+```jsx
+import React, { useState } from 'react';
+
+const DownloadButton = ({ agency, month, year, type }) => {
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    setIsDownloading(true);
+    try {
+      const response = await apiRequest(
+        `/api/download/inventory/${agency}/${month}/${year}/${type}`
+      );
+      
+      // Download the file
+      const blob = new Blob([response.data]);
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${agency}_${month}_${year}_inventory.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = response.filename;
+      link.click();
       
       // Show success message
-      showSuccessMessage('Download completed successfully');
+      showToast({
+        type: 'success',
+        title: 'Download Complete',
+        message: 'File downloaded successfully. Backup to Google Drive handled automatically.'
+      });
       
-      // Note: Data is automatically deleted from Google Sheets after download
-      showInfoMessage('Inventory data has been cleared from the system');
-    } else {
-      throw new Error('Download failed');
+    } catch (error) {
+      handleDownloadError(error);
+    } finally {
+      setIsDownloading(false);
     }
-  } catch (error) {
-    console.error('Error downloading inventory:', error);
-    showErrorMessage('Failed to download inventory data');
-  } finally {
-    hideLoadingIndicator();
+  };
+
+  return (
+    <button 
+      onClick={handleDownload}
+      disabled={isDownloading}
+      className="download-button"
+    >
+      {isDownloading ? 'Downloading...' : `Download ${type.toUpperCase()}`}
+    </button>
+  );
+};
+```
+
+### Error Handling
+```javascript
+const handleDownloadError = (error) => {
+  console.error('Download error:', error);
+  
+  if (error.response?.status === 500) {
+    if (error.response.data?.message?.includes('Google Drive')) {
+      showToast({
+        type: 'warning',
+        title: 'Partial Success',
+        message: 'File downloaded but backup failed. Please contact support.'
+      });
+    } else {
+      showToast({
+        type: 'error',
+        title: 'Server Error',
+        message: 'Please try again or contact support.'
+      });
+    }
+  } else {
+    showToast({
+      type: 'error',
+      title: 'Download Failed',
+      message: error.message || 'An error occurred during download.'
+    });
   }
 };
 ```
 
-#### UI Components Needed:
-- **Download Buttons**: CSV and Excel download options
-- **Loading Indicators**: Show progress during download
-- **Success Messages**: Confirm successful download
-- **Info Messages**: Inform user that data will be cleared
-- **File Naming**: Use format: `{Agency}_{Month}_{Year}_inventory.{format}`
+## ✅ Testing Checklist
 
-## Error Handling
+- [ ] Download CSV works correctly
+- [ ] Download Excel works correctly
+- [ ] First download generates from Google Sheets and creates backup
+- [ ] Subsequent downloads use Google Drive backup
+- [ ] Google Sheets data is cleared after first download
+- [ ] Error handling works for network issues
+- [ ] Error handling works for Google Drive issues
+- [ ] UI shows appropriate success/warning messages
+- [ ] No old backup UI elements remain
+- [ ] Files are properly organized in agency folders on Google Drive
 
-### Common Error Scenarios
+## 🚀 Deployment
 
-1. **Inventory Limit Reached**
-   - Error: "Monthly inventory limit reached for {Agency}. Maximum 2 inventories per month allowed."
-   - UI: Show warning message, disable "Start Inventory" button
+1. **Update frontend code** with new implementation
+2. **Test thoroughly** in development environment
+3. **Deploy frontend** to production
+4. **Verify integration** with production backend
+5. **Monitor logs** for any issues
 
-2. **Active Inventory Exists**
-   - Note: This is now allowed! Multiple users can add scans to the same active inventory
-   - UI: Show current active inventory info, allow users to continue scanning
+## 📞 Support
 
-3. **Entry Not Found for Deletion**
-   - Error: "Scanned entry not found: {barcode} for {Agency}"
-   - UI: Show error message, refresh the inventory list
-
-4. **Download Failures**
-   - Error: Network or server errors during download
-   - UI: Show retry option, maintain data in system
-
-## UI/UX Recommendations
-
-### 1. Inventory Status Dashboard
-Create a dashboard showing:
-- Current month inventory count (e.g., "1/2 inventories this month")
-- Active inventory status
-- Recent inventory history
-- Quick actions (Start, Download, Delete)
-
-### 2. Scan Entry List
-Enhance the scan entry list with:
-- Delete buttons (trash icons)
-- Hover effects for better UX
-- Confirmation dialogs for destructive actions
-- Real-time updates after deletions
-
-### 3. Download Section
-Add a dedicated download section with:
-- Format selection (CSV/Excel)
-- Progress indicators
-- File size information
-- Clear messaging about data cleanup
-
-### 4. Error States
-Implement proper error states for:
-- Network failures
-- Permission errors
-- Validation errors
-- System limits
-
-## Testing Checklist
-
-### 1. Inventory Limits
-- [ ] Test starting inventory when limit is reached
-- [ ] Test starting inventory when another is active
-- [ ] Verify proper error messages
-- [ ] Test UI state updates
-
-### 2. Delete Functionality
-- [ ] Test deleting individual entries
-- [ ] Verify scan count updates
-- [ ] Test error handling for non-existent entries
-- [ ] Verify UI updates after deletion
-
-### 3. Download Functionality
-- [ ] Test CSV download
-- [ ] Test Excel download
-- [ ] Verify file naming convention
-- [ ] Test download with large datasets
-- [ ] Verify data cleanup after download
-
-### 4. Integration
-- [ ] Test complete workflow: start → scan → delete → download
-- [ ] Verify all error scenarios
-- [ ] Test with different agencies
-- [ ] Verify month/year handling
-
-## Security Considerations
-
-1. **Input Validation**: Validate all user inputs on the frontend
-2. **Error Messages**: Don't expose sensitive system information
-3. **File Downloads**: Ensure proper file type validation
-4. **Rate Limiting**: Handle API rate limiting gracefully
-5. **Authentication**: Ensure proper user authentication for all operations
-
-## Performance Considerations
-
-1. **Lazy Loading**: Load inventory data only when needed
-2. **Caching**: Cache inventory limits and status information
-3. **Pagination**: Implement pagination for large inventory lists
-4. **Debouncing**: Debounce delete confirmations to prevent accidental clicks
-5. **File Size**: Monitor download file sizes and provide progress indicators
-
-## Additional Notes
-
-- The backend automatically handles data cleanup after successful downloads
-- All new endpoints include proper error handling and validation
-- The system maintains data integrity through atomic operations
-- Temporary files are automatically cleaned up after downloads
-- All operations are logged for audit purposes
-
-## Support
-
-For technical support or questions about the implementation, refer to the backend API documentation or contact the development team.
+If you encounter any issues:
+1. Check browser console for errors
+2. Check backend logs for Google Drive errors
+3. Verify environment variables are set correctly
+4. Contact backend team for Google Drive configuration issues
