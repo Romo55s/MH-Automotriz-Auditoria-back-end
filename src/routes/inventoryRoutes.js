@@ -293,4 +293,31 @@ router.get('/diagnose-google-sheets', asyncHandler(async (req, res) => {
   }
 }));
 
+// GET /api/inventory/check-completion-by-other/{agency}/{month}/{year}/{currentUserId}
+router.get('/check-completion-by-other/:agency/:month/:year/:currentUserId', asyncHandler(async (req, res) => {
+  const { agency, month, year, currentUserId } = req.params;
+
+  // Validate required parameters
+  if (!agency || !month || !year || !currentUserId) {
+    throw new ValidationError('Missing required parameters: agency, month, year, currentUserId');
+  }
+
+  // Validate month and year format
+  const monthNum = parseInt(month);
+  const yearNum = parseInt(year);
+  
+  if (isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+    throw new ValidationError('Invalid month. Must be between 1 and 12');
+  }
+  
+  if (isNaN(yearNum) || yearNum < 2020 || yearNum > 2030) {
+    throw new ValidationError('Invalid year. Must be between 2020 and 2030');
+  }
+
+  // Check if inventory was completed by another user
+  const completionInfo = await inventoryService.checkCompletionByOther(agency, month, year, currentUserId);
+
+  res.status(200).json(completionInfo);
+}));
+
 module.exports = router;

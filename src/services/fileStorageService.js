@@ -34,12 +34,12 @@ class FileStorageService {
   }
 
   // Store inventory file on Google Drive (simplified - no Google Sheets tracking)
-  async storeInventoryFile(agency, month, year, fileType = 'csv', sessionId = null) {
+  async storeInventoryFile(agency, month, year, fileType = 'csv', inventoryId = null) {
     try {
       console.log(`\n📁 === STORE INVENTORY FILE ===`);
       console.log(`📋 Storing: ${agency} - ${month} ${year} (${fileType})`);
-      if (sessionId) {
-        console.log(`🆔 Session ID: ${sessionId}`);
+      if (inventoryId) {
+        console.log(`🆔 Inventory ID: ${inventoryId}`);
       }
 
       // Get inventory data from the agency sheet
@@ -57,9 +57,22 @@ class FileStorageService {
 
       console.log(`📊 Generated ${fileType} file: ${fileInfo.filename}`);
 
-      // Generate metadata for Google Drive with session ID for uniqueness
+      // Generate metadata for Google Drive with inventory ID and creation date for uniqueness
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const metadata = googleDrive.generateFileMetadata(agency, month, year, fileType, timestamp, sessionId);
+      
+      // Handle createdAt format - it might be in human-readable format from formatDate()
+      let createdAt = new Date().toISOString(); // Default to current time
+      if (inventoryData.createdAt) {
+        // Try to parse the createdAt date
+        const parsedDate = new Date(inventoryData.createdAt);
+        if (!isNaN(parsedDate.getTime())) {
+          createdAt = parsedDate.toISOString();
+        } else {
+          console.log(`⚠️ Could not parse createdAt: ${inventoryData.createdAt}, using current time`);
+        }
+      }
+      
+      const metadata = googleDrive.generateFileMetadata(agency, month, year, fileType, timestamp, inventoryId, createdAt);
 
       // Upload to Google Drive
       const folderId = process.env.GOOGLE_DRIVE_INVENTORY_FOLDER_ID || 'root';
@@ -188,8 +201,12 @@ class FileStorageService {
       await googleDrive.downloadFile(fileId, tempFilePath);
       console.log(`📥 File downloaded to: ${tempFilePath}`);
 
+      // Verify file was created
+      if (!fs.existsSync(tempFilePath)) {
+        throw new Error(`File was not created at path: ${tempFilePath}`);
+      }
+
       console.log(`✅ File ready for download: ${driveFile.name}`);
-      console.log(`🏁 === DOWNLOAD STORED FILE COMPLETE ===\n`);
 
       return {
         success: true,
@@ -363,31 +380,6 @@ class FileStorageService {
     }
   }
 
-  // Download a specific file from Google Drive
-  async downloadStoredFile(fileId) {
-    try {
-      console.log(`\n📥 === DOWNLOAD STORED FILE ===`);
-      console.log(`📋 File ID: ${fileId}`);
-
-      // Get file information
-      const fileInfo = await googleDrive.getFile(fileId);
-      console.log(`📄 File: ${fileInfo.name}`);
-
-      // Download file content
-      const fileContent = await googleDrive.downloadFile(fileId);
-      console.log(`📊 Downloaded ${fileContent.length} bytes`);
-
-      return {
-        filename: fileInfo.name,
-        mimeType: fileInfo.mimeType,
-        size: fileInfo.size,
-        content: fileContent
-      };
-    } catch (error) {
-      console.error(`Error downloading stored file ${fileId}:`, error);
-      throw new GoogleSheetsError(`Failed to download stored file: ${error.message}`);
-    }
-  }
 }
 
 module.exports = new FileStorageService();

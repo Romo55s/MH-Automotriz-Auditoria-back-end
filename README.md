@@ -187,15 +187,23 @@ Server will start on `http://localhost:5000`
 
 The system supports up to 2 inventories per month per location:
 
-1. **First Inventory**: Creates backup with session ID in filename
-2. **Second Inventory**: Creates separate backup with different session ID
-3. **Individual Downloads**: Each inventory can be downloaded separately using session ID
+1. **First Inventory**: Creates backup with unique inventory ID in filename
+2. **Second Inventory**: Creates separate backup with different inventory ID
+3. **Individual Downloads**: Each inventory can be downloaded separately using inventory ID
 4. **Automatic Cleanup**: Google Sheets data is cleared after each successful backup
-5. **Smart Fallback**: If specific session not found, downloads most recent inventory
+5. **Smart Fallback**: If specific inventory not found, downloads most recent inventory
 
 **Example Filenames:**
-- `2025-09-23_Alfa Romeo_September_2025_54300918.csv` (First inventory)
-- `2025-09-23_Alfa Romeo_September_2025_54357269.csv` (Second inventory)
+- `2025-09-10_Jac_September_2025_a7164400.csv` (First inventory - created Sep 10)
+- `2025-09-25_Jac_September_2025_b8275511.csv` (Second inventory - created Sep 25)
+
+**User-Friendly Downloads:**
+- **Any user** can download inventories from **any location**
+- **User chooses** which specific inventory to download
+- **Clear identification** with creation dates and inventory numbers
+- **Universal access** across all users and sessions
+- **Google Drive Integration**: Files are automatically backed up and can be downloaded from any device
+- **Data Integrity**: Prevents conflicts when multiple users work on the same inventory
 
 ### **Enhanced Data Storage**
 
@@ -361,7 +369,34 @@ Process a scanned QR code and update inventory.
 }
 ```
 
-### **9. Get Available Locations**
+### **9. Check Completion by Other User**
+**GET** `/api/inventory/check-completion-by-other/{agency}/{month}/{year}/{currentUserId}`
+
+Check if an inventory was completed by another user to prevent conflicts and ensure data integrity.
+
+**Parameters:**
+- `agency`: Location name (e.g., "Jac", "Suzuki")
+- `month`: Month in "MM" format (e.g., "09")
+- `year`: Year (e.g., 2025)
+- `currentUserId`: Current user's ID/email
+
+**Response:**
+```json
+{
+  "completed": true,
+  "completedBy": "John Doe",
+  "completedAt": "2025-01-15T10:30:00Z",
+  "message": "Inventory was completed by John Doe"
+}
+```
+
+**Use Cases:**
+- **Before starting scan**: Check if someone else completed the inventory
+- **During scanning**: Periodically check for completion by others
+- **Before finishing**: Verify no one else finished it first
+- **Conflict resolution**: Show who completed it and when
+
+### **10. Get Available Locations**
 **GET** `/api/qr/locations`
 
 Get list of available locations (agencies and bodegas).
@@ -392,25 +427,97 @@ Download the most recent inventory file for a specific agency, month, and year.
 
 **Response:** CSV file download
 
-### **11. Download Specific Inventory (NEW)**
-**GET** `/api/download/inventory/:agency/:month/:year/csv/:sessionId`
+### **11. Get Location Inventories (NEW)**
+**GET** `/api/inventory/location/:agency/:month/:year`
 
-Download a specific inventory file by session ID. This allows downloading individual inventories when multiple exist per month.
+Get all available inventories for a specific location. This allows the frontend to show users all available inventories and let them choose which one to download.
 
 **Parameters:**
 - `agency`: Agency name (e.g., "Alfa Romeo", "Honda")
 - `month`: Month number (01-12)
 - `year`: Year (e.g., 2025)
-- `sessionId`: Session ID (e.g., "sess_1758654300918")
+
+**Response:**
+```json
+{
+  "success": true,
+  "location": "Alfa Romeo",
+  "month": "09",
+  "year": "2025",
+  "totalInventories": 2,
+  "inventories": [
+    {
+      "inventoryId": "inv_550e8400-e29b-41d4-a716-446655440000",
+      "filename": "2025-09-23_Alfa Romeo_September_2025_a7164400.csv",
+      "createdAt": "2025-09-23T10:30:00Z",
+      "size": 2048,
+      "downloadUrl": "/api/download/inventory/Alfa Romeo/09/2025/csv/inv_550e8400-e29b-41d4-a716-446655440000"
+    },
+    {
+      "inventoryId": "inv_660f9511-f30c-52e5-b827-557766551111",
+      "filename": "2025-09-24_Alfa Romeo_September_2025_b8275511.csv",
+      "createdAt": "2025-09-24T14:20:00Z",
+      "size": 1536,
+      "downloadUrl": "/api/download/inventory/Alfa Romeo/09/2025/csv/inv_660f9511-f30c-52e5-b827-557766551111"
+    }
+  ],
+  "message": "Found 2 inventory(ies) for Alfa Romeo"
+}
+```
+
+### **12. Download Location Inventory (Smart)**
+**GET** `/api/download/inventory/:agency/:month/:year/csv/location`
+
+Download inventory file for a specific location with smart selection strategies.
+
+**Parameters:**
+- `agency`: Agency name (e.g., "Alfa Romeo", "Honda")
+- `month`: Month number (01-12)
+- `year`: Year (e.g., 2025)
+- `strategy` (query parameter): Selection strategy
+  - `most_recent` (default): Download the most recent inventory
+  - `first`: Download the first (oldest) inventory
+  - `last`: Download the last (newest) inventory
+  - `date_based`: Smart date-based selection (recommended)
+    - **First half of month** (1-15): Downloads first inventory
+    - **Second half of month** (16-31): Downloads second inventory
+
+**Response:** CSV file download
+
+**Examples:**
+```
+# Download most recent inventory (default)
+GET /api/download/inventory/Alfa%20Romeo/09/2025/csv/location
+
+# Smart date-based selection (recommended)
+GET /api/download/inventory/Alfa%20Romeo/09/2025/csv/location?strategy=date_based
+
+# Download first inventory (Pepito's)
+GET /api/download/inventory/Alfa%20Romeo/09/2025/csv/location?strategy=first
+
+# Download last inventory (Tony's)
+GET /api/download/inventory/Alfa%20Romeo/09/2025/csv/location?strategy=last
+```
+
+### **13. Download Specific Inventory**
+**GET** `/api/download/inventory/:agency/:month/:year/csv/:inventoryId`
+
+Download a specific inventory file by inventory ID. This allows downloading individual inventories when multiple exist per month.
+
+**Parameters:**
+- `agency`: Agency name (e.g., "Alfa Romeo", "Honda")
+- `month`: Month number (01-12)
+- `year`: Year (e.g., 2025)
+- `inventoryId`: Inventory ID (e.g., "inv_550e8400-e29b-41d4-a716-446655440000")
 
 **Response:** CSV file download
 
 **Example:**
 ```
-GET /api/download/inventory/Alfa%20Romeo/09/2025/csv/sess_1758654300918
+GET /api/download/inventory/Alfa%20Romeo/09/2025/csv/inv_550e8400-e29b-41d4-a716-446655440000
 ```
 
-### **12. Store File on Google Drive**
+### **14. Store File on Google Drive**
 **POST** `/api/download/store/:agency/:month/:year/:type`
 
 Store an inventory file on Google Drive for long-term storage.

@@ -1,5 +1,6 @@
 const googleSheets = require('./googleSheets');
 const { ValidationError, GoogleSheetsError } = require('../middleware/errorHandler');
+const { v4: uuidv4 } = require('uuid');
 
 class InventoryService {
   constructor() {
@@ -7,21 +8,18 @@ class InventoryService {
     
     // Available locations (agencies + bodegas)
     this.locations = {
-      // Existing agencies
-      'suzuki': { name: 'Suzuki', type: 'agency' },
-      'nissan': { name: 'Nissan', type: 'agency' },
-      'honda': { name: 'Honda', type: 'agency' },
-      'toyota': { name: 'Toyota', type: 'agency' },
-      'mazda': { name: 'Mazda', type: 'agency' },
-      'hyundai': { name: 'Hyundai', type: 'agency' },
-      'kia': { name: 'Kia', type: 'agency' },
-      'volkswagen': { name: 'Volkswagen', type: 'agency' },
-      'chevrolet': { name: 'Chevrolet', type: 'agency' },
-      'ford': { name: 'Ford', type: 'agency' },
+      // Agencies
+      'suzuki': { name: 'Suzuki', type: 'agency', googleSheetId: 'your-suzuki-sheet-id' },
+      'alfa-romeo': { name: 'Alfa Romeo', type: 'agency', googleSheetId: 'Alfa Romeo' },
+      'renault': { name: 'Renault', type: 'agency', googleSheetId: 'Renault' },
+      'jac': { name: 'Jac', type: 'agency', googleSheetId: 'Jac' },
+      'car4u': { name: 'Car4u', type: 'agency', googleSheetId: 'Car4u' },
+      'audi': { name: 'Audi', type: 'agency', googleSheetId: 'audi' },
+      'stellantis': { name: 'Stellantis', type: 'agency', googleSheetId: 'Stellantis' },
       
-      // New bodegas
-      'bodega_coyote': { name: 'Bodega Coyote', type: 'bodega' },
-      'bodega_goyo': { name: 'Bodega Goyo', type: 'bodega' }
+      // Bodegas
+      'bodega-coyote': { name: 'Bodega Coyote', type: 'bodega', googleSheetId: 'Bodega Coyote' },
+      'bodega-goyo': { name: 'Bodega Goyo', type: 'bodega', googleSheetId: 'Bodega Goyo' }
     };
   }
 
@@ -30,7 +28,8 @@ class InventoryService {
     return Object.keys(this.locations).map(key => ({
       id: key,
       name: this.locations[key].name,
-      type: this.locations[key].type
+      type: this.locations[key].type,
+      googleSheetId: this.locations[key].googleSheetId
     }));
   }
 
@@ -220,7 +219,7 @@ class InventoryService {
       const newScanCount = summary.totalScans + 1;
       
       // Update the scan count in the summary - use the atomic update method
-      await this.updateMonthlySummaryScanCount(scanData.agency, month, year, newScanCount, summary.sessionId);
+      await this.updateMonthlySummaryScanCount(scanData.agency, month, year, newScanCount, summary.inventoryId);
 
       // Validate final state to prevent duplicates
       const finalData = await googleSheets.getSheetData(this.summarySheetName);
@@ -314,7 +313,7 @@ class InventoryService {
         agency, month, year, 'Completed', 
         new Date().toISOString(), 
         totalScans,
-        summary.sessionId,
+        summary.inventoryId,
         user
       );
 
@@ -323,11 +322,11 @@ class InventoryService {
         console.log(`📁 Creating automatic backup for completed session with ${totalScans} scans...`);
         try {
           const fileStorageService = require('./fileStorageService');
-          const backupResult = await fileStorageService.storeInventoryFile(agency, month, year, 'csv', summary.sessionId);
+          const backupResult = await fileStorageService.storeInventoryFile(agency, month, year, 'csv', summary.inventoryId);
           console.log(`✅ Automatic backup created: ${backupResult.filename}`);
           
           // Clear agency sheet data after successful backup
-          await this.clearAgencyDataAfterDownload(agency, month, year, summary.sessionId);
+          await this.clearAgencyDataAfterDownload(agency, month, year, summary.inventoryId);
           console.log(`🧹 Agency sheet cleared after backup`);
         } catch (backupError) {
           console.error(`❌ Automatic backup failed:`, backupError.message);
@@ -346,7 +345,7 @@ class InventoryService {
           month: this.getMonthName(month),
           year,
           totalScans,
-          completedAt: this.formatDate(new Date()),
+          completedAt: new Date().toISOString(),
           sessionDuration,
           avgScansPerDay
         }
@@ -417,7 +416,7 @@ class InventoryService {
         createdBy: row[5],       // Created By (6th column)
         userName: row[6],        // User Name (7th column)
         totalScans: row[7],      // Total Scans (8th column)
-        sessionId: row[8],       // Session ID (9th column)
+        inventoryId: row[8],     // Inventory ID (9th column)
         completedAt: row[9]      // Completed At (10th column)
       }));
     } catch (error) {
@@ -503,7 +502,7 @@ class InventoryService {
         createdBy: summary[5],       // Created By (6th column)
         userName: summary[6],        // User Name (7th column)
         totalScans: parseInt(summary[7]) || 0, // Total Scans (8th column)
-        sessionId: summary[8],       // Session ID (9th column)
+        inventoryId: summary[8],     // Inventory ID (9th column)
         completedAt: summary[9],     // Completed At (10th column)
         finishedBy: summary[10] || '' // Finished By (11th column)
       }));
@@ -533,7 +532,7 @@ class InventoryService {
   }
 
   // Update monthly summary scan count only
-  async updateMonthlySummaryScanCount(agency, month, year, newScanCount, sessionId = null) {
+  async updateMonthlySummaryScanCount(agency, month, year, newScanCount, inventoryId = null) {
     try {
       
       const data = await googleSheets.getSheetData(this.summarySheetName);
@@ -545,11 +544,11 @@ class InventoryService {
         const yearMatch = row[1] === year.toString();
         const agencyMatch = row[2] === agency;
         
-        // If sessionId is provided, also match the session ID (column 8)
-        const sessionMatch = sessionId ? row[8] === sessionId : true;
+        // If inventoryId is provided, also match the session ID (column 8)
+        const inventoryMatch = inventoryId ? row[8] === inventoryId : true;
         
         
-        return monthMatch && yearMatch && agencyMatch && sessionMatch;
+        return monthMatch && yearMatch && agencyMatch && inventoryMatch;
       });
 
       if (rowIndex !== -1) {
@@ -605,22 +604,22 @@ class InventoryService {
       // The agency sheet will accumulate data from all inventories in the same month
       console.log(`📋 Preserving agency sheet data for download access`);
       
-      const sessionId = `sess_${Date.now()}`;
-      console.log(`   Generated Session ID: ${sessionId}`);
+      const inventoryId = `inv_${uuidv4()}`;
+      console.log(`   Generated Inventory ID: ${inventoryId}`);
       
-             const values = [
-         this.getMonthName(month),           // Month
-         year.toString(),                    // Year
-         agency,                             // Agency
-         'Active',                           // Status
-         this.formatDate(new Date()),        // Created At
-         user,                               // Created By
-         userName || user,                   // User Name
-         '0',                                // Total Scans ← Start with 0, not 1
-         sessionId,                          // Session ID
-         '',                                 // Completed At
-         ''                                  // Finished By
-       ];
+      const values = [
+        this.getMonthName(month),           // Month
+        year.toString(),                    // Year
+        agency,                             // Agency
+        'Active',                           // Status
+        new Date().toISOString(),           // Created At (ISO format for frontend compatibility)
+        user,                               // Created By
+        userName || user,                   // User Name
+        '0',                                // Total Scans ← Start with 0, not 1
+        inventoryId,                        // Session ID
+        '',                                 // Completed At
+        ''                                  // Finished By
+      ];
       
       console.log(`   Values to append: [${values.join(', ')}]`);
       console.log(`   Appending row to MonthlySummary sheet...`);
@@ -659,7 +658,7 @@ class InventoryService {
           agency: newSummary.agency,
           status: newSummary.status,
           totalScans: newSummary.totalScans,
-          sessionId: newSummary.sessionId
+          inventoryId: newSummary.inventoryId
         });
         console.log(`🏁 === FIND OR CREATE COMPLETE (NEW) ===\n`);
         return newSummary;
@@ -725,11 +724,11 @@ class InventoryService {
         existingRow[1] || year.toString(),                    // Year
         existingRow[2] || agency,                             // Agency
         'Active',                                             // Status (keep as Active during scanning)
-        existingRow[4] || this.formatDate(new Date()),        // Created At
+        existingRow[4] || new Date().toISOString(),           // Created At (ISO format)
         existingRow[5] || user,                               // Created By
         existingRow[6] || userName || user,                   // User Name
         newScanCount.toString(),                              // Total Scans (increment)
-        existingRow[8] || `sess_${Date.now()}`,               // Session ID
+        existingRow[8] || `inv_${uuidv4()}`,                  // Inventory ID
         existingRow[9] || ''                                  // Completed At
       ];
       
@@ -743,7 +742,7 @@ class InventoryService {
   }
 
   // Update monthly summary status
-  async updateMonthlySummaryStatus(agency, month, year, status, completedAt, totalScans, sessionId = null, finishedBy = null) {
+  async updateMonthlySummaryStatus(agency, month, year, status, completedAt, totalScans, inventoryId = null, finishedBy = null) {
     try {
       const data = await googleSheets.getSheetData(this.summarySheetName);
       
@@ -754,10 +753,10 @@ class InventoryService {
         const yearMatch = row[1] === year.toString();
         const agencyMatch = row[2] === agency;
         
-        // If sessionId is provided, also match the session ID (column 8)
-        const sessionMatch = sessionId ? row[8] === sessionId : true;
+        // If inventoryId is provided, also match the session ID (column 8)
+        const inventoryMatch = inventoryId ? row[8] === inventoryId : true;
         
-        return monthMatch && yearMatch && agencyMatch && sessionMatch;
+        return monthMatch && yearMatch && agencyMatch && inventoryMatch;
       });
 
       if (rowIndex !== -1) {
@@ -768,7 +767,7 @@ class InventoryService {
         // Update the specific fields
         updatedRow[3] = status;                    // Status (4th column)
         updatedRow[7] = (totalScans || 0).toString(); // Total Scans (8th column)
-        updatedRow[9] = completedAt ? this.formatDate(completedAt) : ''; // Completed At (10th column)
+        updatedRow[9] = completedAt ? new Date(completedAt).toISOString() : ''; // Completed At (10th column) - ISO format
         updatedRow[10] = finishedBy || '';         // Finished By (11th column)
         
         // Ensure all required fields are present
@@ -1346,7 +1345,7 @@ class InventoryService {
    * This keeps the inventory status as "Completed" but cleans the agency sheet
    * and preserves the total scan count in MonthlySummary
    */
-  async clearAgencyDataAfterDownload(agency, month, year, sessionId) {
+  async clearAgencyDataAfterDownload(agency, month, year, inventoryId) {
     try {
       // Get current scan count before clearing
       const summary = await this.getMonthlySummary(agency, month, year);
@@ -1356,9 +1355,9 @@ class InventoryService {
       await googleSheets.clearSheet(agency);
       
       // Update MonthlySummary to ensure scan count is preserved
-      if (summary && sessionId) {
+      if (summary && inventoryId) {
         // Only update the scan count, preserve the original completedAt date
-        await this.updateMonthlySummaryScanCount(agency, month, year, currentScanCount, sessionId);
+        await this.updateMonthlySummaryScanCount(agency, month, year, currentScanCount, inventoryId);
       }
       
       return {
@@ -1369,6 +1368,108 @@ class InventoryService {
     } catch (error) {
       console.error(`❌ Error clearing agency sheet data:`, error);
       throw new GoogleSheetsError(`Failed to clear agency sheet data: ${error.message}`);
+    }
+  }
+
+  // Check if inventory was completed by another user
+  async checkCompletionByOther(agency, month, year, currentUserId) {
+    try {
+      console.log(`\n🔍 === CHECK COMPLETION BY OTHER ===`);
+      console.log(`📋 Checking: ${agency} - ${this.getMonthName(month)} ${year}`);
+      console.log(`👤 Current user: ${currentUserId}`);
+
+      // Get all inventories for this agency/month/year
+      const inventories = await this.getAllMonthlyInventories(agency, month, year);
+      
+      if (inventories.length === 0) {
+        return {
+          completed: false,
+          completedBy: null,
+          completedAt: null,
+          message: `No inventories found for ${agency} - ${this.getMonthName(month)} ${year}`
+        };
+      }
+
+      // Find active inventories (not completed)
+      const activeInventories = inventories.filter(inv => inv.status === 'Active');
+      
+      if (activeInventories.length === 0) {
+        // No active inventory - check if there's a completed one
+        const completedInventories = inventories.filter(inv => inv.status === 'Completed');
+        
+        if (completedInventories.length === 0) {
+          return {
+            completed: false,
+            completedBy: null,
+            completedAt: null,
+            message: `No active or completed inventories found for ${agency} - ${this.getMonthName(month)} ${year}`
+          };
+        }
+
+        // Get the most recent completed inventory
+        const latestCompleted = completedInventories[completedInventories.length - 1];
+        
+        // Check if it was completed by a different user
+        const completedByDifferentUser = latestCompleted.finishedBy && 
+                                       latestCompleted.finishedBy !== currentUserId;
+
+        console.log(`📊 Latest completed inventory:`, {
+          completedBy: latestCompleted.finishedBy,
+          completedAt: latestCompleted.completedAt,
+          currentUser: currentUserId,
+          differentUser: completedByDifferentUser
+        });
+
+        if (completedByDifferentUser) {
+          return {
+            completed: true,
+            completedBy: latestCompleted.finishedBy,
+            completedAt: latestCompleted.completedAt,
+            message: `Inventory was completed by ${latestCompleted.finishedBy}`
+          };
+        } else {
+          return {
+            completed: false,
+            completedBy: latestCompleted.finishedBy,
+            completedAt: latestCompleted.completedAt,
+            message: `Inventory was completed by the same user (${currentUserId})`
+          };
+        }
+      } else {
+        // There's an active inventory - check if it was completed by someone else
+        const activeInventory = activeInventories[activeInventories.length - 1];
+        
+        // Check if the active inventory was completed by a different user
+        const completedByDifferentUser = activeInventory.finishedBy && 
+                                       activeInventory.finishedBy !== currentUserId;
+
+        console.log(`📊 Active inventory:`, {
+          status: activeInventory.status,
+          createdBy: activeInventory.createdBy,
+          finishedBy: activeInventory.finishedBy,
+          currentUser: currentUserId,
+          differentUser: completedByDifferentUser
+        });
+
+        if (completedByDifferentUser) {
+          return {
+            completed: true,
+            completedBy: activeInventory.finishedBy,
+            completedAt: activeInventory.completedAt,
+            message: `Active inventory was completed by ${activeInventory.finishedBy}`
+          };
+        } else {
+          return {
+            completed: false,
+            completedBy: activeInventory.finishedBy,
+            completedAt: activeInventory.completedAt,
+            message: `Active inventory is available for scanning`
+          };
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Error checking completion by other:`, error);
+      throw new GoogleSheetsError(`Failed to check completion by other: ${error.message}`);
     }
   }
 
@@ -1396,7 +1497,7 @@ class InventoryService {
       console.log(`📊 Found ${completedInventories.length} completed inventory(ies), using most recent:`, {
         totalScans: summary.totalScans,
         status: summary.status,
-        sessionId: summary.sessionId
+        inventoryId: summary.inventoryId
       });
 
       // Get all scanned data from agency sheet
@@ -1464,7 +1565,7 @@ class InventoryService {
         status: summary.status,
         createdAt: summary.createdAt,
         completedAt: summary.completedAt,
-        sessionId: summary.sessionId, // Include sessionId for download tracking
+        inventoryId: summary.inventoryId, // Include inventoryId for download tracking
         scans: monthScans.map(row => ({
           date: row[0],
           identifier: row[1], // Can be barcode or serie

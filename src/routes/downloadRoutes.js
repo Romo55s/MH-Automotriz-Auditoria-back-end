@@ -7,44 +7,208 @@ const fileStorageService = require('../services/fileStorageService');
 const { asyncHandler, ValidationError, GoogleSheetsError } = require('../middleware/errorHandler');
 
 
-// GET /api/download/inventory/:agency/:month/:year/csv/:sessionId - Download specific inventory by session ID
-router.get('/inventory/:agency/:month/:year/csv/:sessionId', asyncHandler(async (req, res) => {
-  const { agency, month, year, sessionId } = req.params;
+// GET /api/inventory/location/:agency/:month/:year - Get all inventories for a location
+router.get('/inventory/location/:agency/:month/:year', asyncHandler(async (req, res) => {
+  const { agency, month, year } = req.params;
 
   // Validate parameters
-  if (!agency || !month || !year || !sessionId) {
-    throw new ValidationError('Missing required parameters: agency, month, year, sessionId');
+  if (!agency || !month || !year) {
+    throw new ValidationError('Missing required parameters: agency, month, year');
+  }
+
+  try {
+    // Get all stored files for this agency
+    const storedFiles = await fileStorageService.getStoredFilesByAgency(agency);
+    
+    // Filter files for this month/year and sort by creation date (most recent first)
+    const monthFiles = storedFiles.filter(file => 
+      file.name.includes(`${agency}`) && 
+      file.name.includes(`${month}`) && 
+      file.name.includes(`${year}`)
+    ).sort((a, b) => new Date(b.createdTime) - new Date(a.createdTime));
+
+    // Extract inventory information from filenames
+    const inventories = monthFiles.map((file, index) => {
+      // Extract inventory ID from filename (last 8 characters before .csv)
+      const filenameWithoutExt = file.name.replace('.csv', '');
+      const parts = filenameWithoutExt.split('_');
+      const inventoryId = parts[parts.length - 1]; // Last part should be the short inventory ID
+      
+      // Extract creation date from filename (first part: YYYY-MM-DD)
+      const creationDate = parts[0]; // First part should be the creation date
+      
+      return {
+        inventoryId: `inv_${inventoryId}`, // Reconstruct full inventory ID
+        filename: file.name,
+        createdAt: file.createdTime,
+        creationDate: creationDate, // Date when inventory was created
+        size: file.size,
+        inventoryNumber: index + 1, // 1st, 2nd, etc.
+        downloadUrl: `/api/download/inventory/${agency}/${month}/${year}/csv/inv_${inventoryId}`,
+        displayName: `Inventory #${index + 1} (${creationDate})`
+      };
+    });
+
+    res.json({
+      success: true,
+      location: agency,
+      month: month,
+      year: year,
+      totalInventories: inventories.length,
+      inventories: inventories,
+      message: inventories.length > 0 
+        ? `Found ${inventories.length} inventory(ies) for ${agency}` 
+        : `No inventories found for ${agency} ${month}/${year}`
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get location inventories',
+      error: error.message
+    });
+  }
+}));
+
+// GET /api/download/inventory/:agency/:month/:year/csv/location - Download most recent inventory for location
+router.get('/inventory/:agency/:month/:year/csv/location', asyncHandler(async (req, res) => {
+  const { agency, month, year } = req.params;
+  const { strategy = 'most_recent' } = req.query; // Strategy: most_recent, first, last, all
+
+  // Validate parameters
+  if (!agency || !month || !year) {
+    throw new ValidationError('Missing required parameters: agency, month, year');
+  }
+
+  try {
+    // Get all stored files for this agency
+    const storedFiles = await fileStorageService.getStoredFilesByAgency(agency);
+    
+    // Filter files for this month/year and sort by creation date
+    const monthFiles = storedFiles.filter(file => 
+      file.name.includes(`${agency}`) && 
+      file.name.includes(`${month}`) && 
+      file.name.includes(`${year}`)
+    ).sort((a, b) => new Date(b.createdTime) - new Date(a.createdTime));
+
+    if (monthFiles.length === 0) {
+      // No backup files found, generate from Google Sheets
+      const inventoryData = await inventoryService.getInventoryDataForDownload(agency, month, year);
+      const fileInfo = await downloadService.generateCSV(inventoryData);
+
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileInfo.filename}"`);
+      res.setHeader('Content-Length', fileInfo.size);
+
+      res.sendFile(fileInfo.filepath, (err) => {
+        if (err) {
+          console.error('Error sending file:', err);
+        } else {
+          // Store file on Google Drive before clearing data (first time only)
+          fileStorageService.storeInventoryFile(agency, month, year, 'csv', inventoryData.inventoryId)
+            .then((result) => {
+              console.log('✅ File stored on Google Drive:', result.filename);
+            })
+            .catch((error) => {
+              console.error('❌ Failed to store file on Google Drive:', error);
+            })
+            .finally(() => {
+              inventoryService.clearAgencyDataAfterDownload(agency, month, year, inventoryData.inventoryId)
+                .catch((error) => {
+                  console.error('❌ Failed to clear agency sheet data:', error);
+                });
+            });
+        }
+        downloadService.cleanupFile(fileInfo.filepath);
+      });
+      return;
+    }
+
+    // Handle different download strategies
+    let selectedFile;
+    switch (strategy) {
+      case 'first':
+        selectedFile = monthFiles[monthFiles.length - 1]; // Oldest (first created)
+        break;
+      case 'last':
+        selectedFile = monthFiles[0]; // Newest (last created)
+        break;
+      case 'date_based':
+        // Smart date-based selection
+        const currentDate = new Date();
+        const currentDay = currentDate.getDate();
+        
+        if (currentDay <= 15) {
+          // First half of month - get first inventory
+          selectedFile = monthFiles[monthFiles.length - 1]; // Oldest
+          console.log(`📅 Date-based selection: First half of month (day ${currentDay}) - selecting first inventory`);
+        } else {
+          // Second half of month - get second inventory
+          selectedFile = monthFiles[0]; // Newest
+          console.log(`📅 Date-based selection: Second half of month (day ${currentDay}) - selecting second inventory`);
+        }
+        break;
+      case 'most_recent':
+      default:
+        selectedFile = monthFiles[0]; // Most recent (default)
+        break;
+    }
+
+    // Download the selected file
+    const fileData = await fileStorageService.downloadStoredFile(selectedFile.id);
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${selectedFile.name}"`);
+    res.setHeader('Content-Length', fileData.size);
+    res.send(fileData.content);
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download inventory file',
+      error: error.message
+    });
+  }
+}));
+
+// GET /api/download/inventory/:agency/:month/:year/csv/:inventoryId - Download specific inventory by inventory ID
+router.get('/inventory/:agency/:month/:year/csv/:inventoryId', asyncHandler(async (req, res) => {
+  const { agency, month, year, inventoryId } = req.params;
+
+  // Validate parameters
+  if (!agency || !month || !year || !inventoryId) {
+    throw new ValidationError('Missing required parameters: agency, month, year, inventoryId');
   }
 
   try {
     // First, check if there's a backup file with this specific session ID
     const storedFiles = await fileStorageService.getStoredFilesByAgency(agency);
     
-    // Look for file with specific session ID in filename
-    const shortSessionId = sessionId.replace('sess_', '').slice(-8);
+    // Look for file with specific inventory ID in filename
+    const shortInventoryId = inventoryId.replace('inv_', '').slice(-8);
     
-    const sessionFile = storedFiles.find(file => {
+    const inventoryFile = storedFiles.find(file => {
       const hasAgency = file.name.includes(`${agency}`);
       const hasMonth = file.name.includes(`${month}`);
       const hasYear = file.name.includes(`${year}`);
-      const hasSessionId = file.name.includes(shortSessionId);
+      const hasInventoryId = file.name.includes(shortInventoryId);
       
-      return hasAgency && hasMonth && hasYear && hasSessionId;
+      return hasAgency && hasMonth && hasYear && hasInventoryId;
     });
 
-    if (sessionFile) {
+    if (inventoryFile) {
       // Download from Google Drive backup
-      const fileData = await fileStorageService.downloadStoredFile(sessionFile.id);
+      const fileData = await fileStorageService.downloadStoredFile(inventoryFile.id);
       
       res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', `attachment; filename="${sessionFile.name}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${inventoryFile.name}"`);
       res.setHeader('Content-Length', fileData.size);
       res.send(fileData.content);
       
       return;
     }
 
-    // If no specific session file found, fall back to most recent
+    // If no specific inventory file found, fall back to most recent
     const monthFiles = storedFiles.filter(file => 
       file.name.includes(`${agency}`) && 
       file.name.includes(`${month}`) && 
@@ -126,8 +290,8 @@ router.get('/inventory/:agency/:month/:year/csv', asyncHandler(async (req, res) 
         console.error('Error sending file:', err);
       } else {
         // Store file on Google Drive before clearing data (first time only)
-        // Pass session ID for unique filename
-        fileStorageService.storeInventoryFile(agency, month, year, 'csv', inventoryData.sessionId)
+        // Pass inventory ID for unique filename
+        fileStorageService.storeInventoryFile(agency, month, year, 'csv', inventoryData.inventoryId)
           .then((result) => {
             console.log('✅ File stored on Google Drive:', result.filename);
           })
@@ -136,7 +300,7 @@ router.get('/inventory/:agency/:month/:year/csv', asyncHandler(async (req, res) 
           })
           .finally(() => {
             // Clear agency sheet data after Google Drive storage (or attempt)
-            inventoryService.clearAgencyDataAfterDownload(agency, month, year, inventoryData.sessionId)
+            inventoryService.clearAgencyDataAfterDownload(agency, month, year, inventoryData.inventoryId)
               .catch((error) => {
                 console.error('❌ Failed to clear agency sheet data:', error);
               });
@@ -191,7 +355,7 @@ router.get('/inventory/:agency/:month/:year/excel', asyncHandler(async (req, res
         })
         .finally(() => {
           // Clear agency sheet data after Google Drive storage (or attempt)
-          inventoryService.clearAgencyDataAfterDownload(agency, month, year, inventoryData.sessionId)
+          inventoryService.clearAgencyDataAfterDownload(agency, month, year, inventoryData.inventoryId)
             .catch((error) => {
               console.error('❌ Failed to clear agency sheet data:', error);
             });
@@ -346,6 +510,17 @@ router.get('/stored-file/:fileId', asyncHandler(async (req, res) => {
 
   // Download file from Google Drive
   const fileInfo = await fileStorageService.downloadStoredFile(fileId);
+
+  // Validate file path exists
+  if (!fileInfo.filepath) {
+    throw new ValidationError('File path is missing from download response');
+  }
+
+  // Check if file exists
+  const fs = require('fs');
+  if (!fs.existsSync(fileInfo.filepath)) {
+    throw new ValidationError(`File not found at path: ${fileInfo.filepath}`);
+  }
 
   // Set response headers for file download
   res.setHeader('Content-Type', fileInfo.mimeType);

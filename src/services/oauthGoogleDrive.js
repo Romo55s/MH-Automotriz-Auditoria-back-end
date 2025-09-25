@@ -220,19 +220,30 @@ class OAuthGoogleDriveService {
   }
 
   // Generate file metadata
-  generateFileMetadata(agency, month, year, type, timestamp, sessionId = null) {
-    // Create a more organized filename: YYYY-MM-DD_Agency_Month_Year_SessionID.type
+  generateFileMetadata(agency, month, year, type, timestamp, inventoryId = null, createdAt = null) {
+    // Create a more organized filename: YYYY-MM-DD_Agency_Month_Year_CreationDate.type
     const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     const monthName = this.getMonthName(month);
     
-    // Include session ID for uniqueness when multiple inventories per month
+    // Use creation date if provided and valid, otherwise use current date
+    let fileDate = date;
+    if (createdAt) {
+      const createdDate = new Date(createdAt);
+      if (!isNaN(createdDate.getTime())) {
+        fileDate = createdDate.toISOString().split('T')[0];
+      } else {
+        console.log(`⚠️ Invalid createdAt date: ${createdAt}, using current date instead`);
+      }
+    }
+    
+    // Include inventory ID for uniqueness when multiple inventories per month
     let filename;
-    if (sessionId) {
-      // Extract short session ID (last 8 characters)
-      const shortSessionId = sessionId.replace('sess_', '').slice(-8);
-      filename = `${date}_${agency}_${monthName}_${year}_${shortSessionId}.${type}`;
+    if (inventoryId) {
+      // Extract short inventory ID (last 8 characters of UUID)
+      const shortInventoryId = inventoryId.replace('inv_', '').slice(-8);
+      filename = `${fileDate}_${agency}_${monthName}_${year}_${shortInventoryId}.${type}`;
     } else {
-      filename = `${date}_${agency}_${monthName}_${year}.${type}`;
+      filename = `${fileDate}_${agency}_${monthName}_${year}.${type}`;
     }
 
     return {
@@ -242,7 +253,7 @@ class OAuthGoogleDriveService {
       year,
       type,
       timestamp,
-      sessionId
+      inventoryId
     };
   }
 
@@ -339,7 +350,7 @@ class OAuthGoogleDriveService {
   }
 
   // Download file content
-  async downloadFile(fileId) {
+  async downloadFile(fileId, filePath = null) {
     try {
       await this.ensureInitialized();
       // Use the initialized Drive client which includes OAuth and API key
@@ -350,7 +361,25 @@ class OAuthGoogleDriveService {
         responseType: 'arraybuffer'
       });
       
-      return Buffer.from(response.data);
+      const buffer = Buffer.from(response.data);
+      
+      // If filePath is provided, write the file to disk
+      if (filePath) {
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Ensure directory exists
+        const dir = path.dirname(filePath);
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        
+        // Write file to disk
+        fs.writeFileSync(filePath, buffer);
+        console.log(`📁 File written to: ${filePath}`);
+      }
+      
+      return buffer;
     } catch (error) {
       console.error(`Error downloading file:`, error);
       throw new GoogleSheetsError(`Failed to download file: ${error.message}`);
