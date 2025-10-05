@@ -28,7 +28,7 @@ async function setupOAuthProduction() {
     const oauth2Client = new google.auth.OAuth2(
       credentials.client_id,
       credentials.client_secret,
-      'urn:ietf:wg:oauth:2.0:oob'
+      'http://localhost'
     );
 
     // Generate authorization URL

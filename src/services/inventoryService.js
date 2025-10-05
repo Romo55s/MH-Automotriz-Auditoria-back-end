@@ -54,7 +54,20 @@ class InventoryService {
 
   // Format date for human readability
   formatDate(date) {
-    return new Date(date).toLocaleDateString('en-US', {
+    // Handle invalid dates gracefully
+    if (!date || date === '' || date === null || date === undefined) {
+      return '';
+    }
+    
+    const dateObj = new Date(date);
+    
+    // Check if the date is valid
+    if (isNaN(dateObj.getTime())) {
+      console.log(`⚠️ Invalid date provided to formatDate: ${date}`);
+      return '';
+    }
+    
+    return dateObj.toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
@@ -612,7 +625,7 @@ class InventoryService {
         year.toString(),                    // Year
         agency,                             // Agency
         'Active',                           // Status
-        new Date().toISOString(),           // Created At (ISO format for frontend compatibility)
+        this.formatDate(new Date()),        // Created At (human-readable format)
         user,                               // Created By
         userName || user,                   // User Name
         '0',                                // Total Scans ← Start with 0, not 1
@@ -724,7 +737,7 @@ class InventoryService {
         existingRow[1] || year.toString(),                    // Year
         existingRow[2] || agency,                             // Agency
         'Active',                                             // Status (keep as Active during scanning)
-        existingRow[4] || new Date().toISOString(),           // Created At (ISO format)
+        existingRow[4] || this.formatDate(new Date()),        // Created At (human-readable format)
         existingRow[5] || user,                               // Created By
         existingRow[6] || userName || user,                   // User Name
         newScanCount.toString(),                              // Total Scans (increment)
@@ -767,7 +780,7 @@ class InventoryService {
         // Update the specific fields
         updatedRow[3] = status;                    // Status (4th column)
         updatedRow[7] = (totalScans || 0).toString(); // Total Scans (8th column)
-        updatedRow[9] = completedAt ? new Date(completedAt).toISOString() : ''; // Completed At (10th column) - ISO format
+        updatedRow[9] = completedAt ? this.formatDate(completedAt) : ''; // Completed At (10th column) - human-readable format
         updatedRow[10] = finishedBy || '';         // Finished By (11th column)
         
         // Ensure all required fields are present
@@ -1386,6 +1399,7 @@ class InventoryService {
           completed: false,
           completedBy: null,
           completedAt: null,
+          sessionId: null,
           message: `No inventories found for ${agency} - ${this.getMonthName(month)} ${year}`
         };
       }
@@ -1402,6 +1416,7 @@ class InventoryService {
             completed: false,
             completedBy: null,
             completedAt: null,
+            sessionId: null,
             message: `No active or completed inventories found for ${agency} - ${this.getMonthName(month)} ${year}`
           };
         }
@@ -1425,6 +1440,7 @@ class InventoryService {
             completed: true,
             completedBy: latestCompleted.finishedBy,
             completedAt: latestCompleted.completedAt,
+            sessionId: latestCompleted.inventoryId,
             message: `Inventory was completed by ${latestCompleted.finishedBy}`
           };
         } else {
@@ -1432,6 +1448,7 @@ class InventoryService {
             completed: false,
             completedBy: latestCompleted.finishedBy,
             completedAt: latestCompleted.completedAt,
+            sessionId: latestCompleted.inventoryId,
             message: `Inventory was completed by the same user (${currentUserId})`
           };
         }
@@ -1456,6 +1473,7 @@ class InventoryService {
             completed: true,
             completedBy: activeInventory.finishedBy,
             completedAt: activeInventory.completedAt,
+            sessionId: activeInventory.inventoryId,
             message: `Active inventory was completed by ${activeInventory.finishedBy}`
           };
         } else {
@@ -1463,6 +1481,7 @@ class InventoryService {
             completed: false,
             completedBy: activeInventory.finishedBy,
             completedAt: activeInventory.completedAt,
+            sessionId: activeInventory.inventoryId,
             message: `Active inventory is available for scanning`
           };
         }

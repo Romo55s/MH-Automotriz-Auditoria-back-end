@@ -52,14 +52,21 @@ class OAuthGoogleDriveService {
       this.auth = new google.auth.OAuth2(
         credentials.client_id,
         credentials.client_secret,
-        'urn:ietf:wg:oauth:2.0:oob' // For desktop applications
+        'http://localhost' // Match the redirect URI in Google Cloud Console
       );
 
-      // Set refresh token if available
+      // Set OAuth tokens if available
       if (process.env.GOOGLE_REFRESH_TOKEN) {
-        this.auth.setCredentials({
+        const credentials = {
           refresh_token: process.env.GOOGLE_REFRESH_TOKEN
-        });
+        };
+        
+        // Add access token if available
+        if (process.env.GOOGLE_ACCESS_TOKEN) {
+          credentials.access_token = process.env.GOOGLE_ACCESS_TOKEN;
+        }
+        
+        this.auth.setCredentials(credentials);
         console.log('✅ OAuth credentials set from environment variables');
         console.log('🔍 Environment Variables Debug:');
         console.log('  - GOOGLE_REFRESH_TOKEN:', process.env.GOOGLE_REFRESH_TOKEN ? 'Present' : 'Missing');
@@ -104,7 +111,8 @@ class OAuthGoogleDriveService {
   // Get OAuth URL for authorization
   getAuthUrl() {
     const scopes = [
-      'https://www.googleapis.com/auth/drive.file'
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/drive'
     ];
 
     return this.auth.generateAuthUrl({

@@ -3,13 +3,16 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
+const http = require('http');
 require('dotenv').config();
 
 const apiRoutes = require('./routes/api');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const cleanupScheduler = require('./services/cleanupScheduler');
+const websocketService = require('./services/websocketService');
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 5000;
 
 // Trust proxy for Render deployment (fixes rate limiter X-Forwarded-For header issue)
@@ -18,7 +21,7 @@ app.set('trust proxy', 1);
 // Security middleware
 app.use(helmet());
 
-// CORS configuration - Safari compatible with multiple origins
+// CORS configuration - Environment-driven with fallbacks
 const allowedOrigins = [
   'https://mh-automotriz-auditoria.netlify.app', // Production frontend
   'http://localhost:3000', // Local development
@@ -27,7 +30,17 @@ const allowedOrigins = [
   'http://127.0.0.1:3001'  // Alternative localhost port
 ];
 
-// Add custom origin from environment if provided
+// Add custom origins from environment variables
+if (process.env.CORS_ORIGINS) {
+  const customOrigins = process.env.CORS_ORIGINS.split(',').map(origin => origin.trim());
+  customOrigins.forEach(origin => {
+    if (!allowedOrigins.includes(origin)) {
+      allowedOrigins.push(origin);
+    }
+  });
+}
+
+// Add single frontend URL from environment if provided
 if (process.env.FRONTEND_URL && !allowedOrigins.includes(process.env.FRONTEND_URL)) {
   allowedOrigins.push(process.env.FRONTEND_URL);
 }
@@ -168,8 +181,10 @@ app.get('/health/detailed', async (req, res) => {
         googleSheets: sheetsStatus,
         googleDrive: driveStatus,
         auth0: process.env.AUTH0_DOMAIN ? 'configured' : 'not_configured',
-        cleanupScheduler: cleanupScheduler.getStatus()
+        cleanupScheduler: cleanupScheduler.getStatus(),
+        websocket: 'active'
       },
+      websocket: websocketService.getMetrics(),
       version: process.env.npm_package_version || '1.0.0',
       nodeVersion: process.version,
       pid: process.pid
@@ -191,11 +206,38 @@ app.use('*', notFoundHandler);
 // Global error handling middleware (must be last)
 app.use(errorHandler);
 
-app.listen(PORT, () => {
+// Initialize WebSocket service
+websocketService.initialize(server);
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully');
+  
+  websocketService.shutdown();
+  
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 SIGINT received, shutting down gracefully');
+  
+  websocketService.shutdown();
+  
+  server.close(() => {
+    console.log('✅ Server closed');
+    process.exit(0);
+  });
+});
+
+server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔒 Security: Helmet, CORS, Rate Limiting enabled`);
   console.log(`📝 Logging: Morgan enabled`);
+  console.log(`🔌 WebSocket: /ws/inventory`);
   console.log(`🌐 Health check: http://localhost:${PORT}/health`);
   
   // Start cleanup scheduler (disabled - using Google Drive only)

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const inventoryService = require('../services/inventoryService');
+const websocketService = require('../services/websocketService');
 const { asyncHandler, ValidationError, GoogleSheetsError } = require('../middleware/errorHandler');
 
 // POST /api/inventory/save-scan
@@ -22,6 +23,9 @@ router.post('/save-scan', asyncHandler(async (req, res) => {
     carData: carData || null // Optional car data for QR scans
   });
 
+  // Notify connected WebSocket clients about the scan
+  websocketService.notifyScanAdded(agency, month, year, user, userName || user, code, user);
+
   res.status(200).json(result);
 }));
 
@@ -40,6 +44,16 @@ router.post('/finish-session', asyncHandler(async (req, res) => {
     year,
     user
   });
+
+  // Notify connected WebSocket clients about inventory completion
+  websocketService.notifyInventoryCompleted(
+    agency, 
+    month, 
+    year, 
+    result.completedBy || user, 
+    result.inventoryId,
+    `El inventario ha sido completado por ${result.completedBy || user}.`
+  );
 
   res.status(200).json(result);
 }));
@@ -149,6 +163,18 @@ router.delete('/delete-scanned-entry', asyncHandler(async (req, res) => {
   }
 
   const result = await inventoryService.deleteScannedEntry(agency, barcode);
+  
+  // Notify connected WebSocket clients about scan removal
+  // Extract user info from the result if available
+  const user = result.user || 'unknown';
+  const userName = result.userName || user;
+  
+  // We need to get the room info from the request or result
+  // For now, we'll try to get it from the request body
+  if (req.body.month && req.body.year) {
+    websocketService.notifyScanRemoved(agency, req.body.month, req.body.year, user, userName, barcode, user);
+  }
+
   res.status(200).json(result);
 }));
 
@@ -318,6 +344,43 @@ router.get('/check-completion-by-other/:agency/:month/:year/:currentUserId', asy
   const completionInfo = await inventoryService.checkCompletionByOther(agency, month, year, currentUserId);
 
   res.status(200).json(completionInfo);
+}));
+
+// GET /api/inventory/websocket/room-info/:agency/:month/:year
+router.get('/websocket/room-info/:agency/:month/:year', asyncHandler(async (req, res) => {
+  const { agency, month, year } = req.params;
+
+  // Validate parameters
+  if (!agency || !month || !year) {
+    throw new ValidationError('Missing required parameters: agency, month, year');
+  }
+
+  const usersInRoom = websocketService.getUsersInRoom(agency, month, year);
+  const roomStats = websocketService.getRoomStats();
+  const roomKey = `${agency}/${month}/${year}`;
+
+  res.status(200).json({
+    roomKey,
+    agency,
+    month,
+    year,
+    usersInRoom,
+    totalUsers: usersInRoom.length,
+    roomExists: roomStats[roomKey] ? true : false,
+    allRooms: Object.keys(roomStats)
+  });
+}));
+
+// GET /api/inventory/websocket/metrics
+router.get('/websocket/metrics', asyncHandler(async (req, res) => {
+  const metrics = websocketService.getMetrics();
+  const roomStats = websocketService.getRoomStats();
+
+  res.status(200).json({
+    metrics,
+    roomStats,
+    timestamp: new Date().toISOString()
+  });
 }));
 
 module.exports = router;

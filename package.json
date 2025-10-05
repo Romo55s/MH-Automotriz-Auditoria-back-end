@@ -17,6 +17,13 @@
     "setup:render": "node scripts/setup-render-credentials.js",
     "get:credentials": "node scripts/get-base64-credentials.js",
     "health": "curl -f http://localhost:5000/health || exit 1",
+    "test:websocket": "node scripts/test-websocket.js",
+    "test:websocket:load": "node scripts/load-test-websocket.js",
+    "test:validate": "node scripts/pre-test-validation.js",
+    "test:minimal": "node scripts/minimal-quota-test.js",
+    "test:real-world": "node scripts/real-world-load-test.js",
+    "test:quota-recovery": "node scripts/quota-recovery-test.js",
+    "test:all": "npm run test:validate && npm run test:minimal && npm run test:real-world",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -45,6 +52,7 @@
     "node-cron": "^3.0.3",
     "qrcode": "^1.5.4",
     "uuid": "^8.3.2",
+    "ws": "^8.18.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

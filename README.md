@@ -1,22 +1,23 @@
 # 🚗 Car Inventory Backend
 
-A comprehensive Node.js backend API for managing monthly car inventory with QR code generation, Google Sheets integration, Google Drive storage, and advanced security features.
+A comprehensive Node.js backend API for managing monthly car inventory with QR code generation, Google Sheets integration, Google Drive storage, **real-time WebSocket collaboration**, and advanced security features. **Production-ready with intelligent quota management**.
 
 ## ✨ Features
 
-- **Multiple Inventories Per Month**: Each location can have up to 2 inventories per month with unique session tracking
-- **QR Code Generation**: Generate QR codes from CSV files with car data (serie, marca, color, ubicaciones)
-- **QR Code Scanning**: Scan generated QR codes to update inventory
-- **Google Sheets Integration**: Automatic data storage and retrieval
-- **Smart Google Drive Storage**: Automatic backup with 30-day cleanup and smart download flow
-- **Multi-Location Support**: Support for both Agencies and Bodegas
-- **Session Management**: Complete inventory session lifecycle
-- **CSV Processing**: Upload and process CSV files with car inventory data
-- **File Management**: Download and manage stored inventory files
-- **Input Validation**: Comprehensive data validation and sanitization
-- **Security Features**: Rate limiting, CORS, Helmet security headers
-- **Logging & Monitoring**: Request logging and error tracking
-- **Error Handling**: Graceful error handling with meaningful messages
+- **🔄 Real-Time WebSocket Collaboration**: Multiple users can work on the same inventory simultaneously with live updates
+- **📊 Intelligent Quota Management**: Production-optimized Google Sheets API usage with automatic throttling and emergency mode
+- **🏢 Multiple Inventories Per Month**: Each location can have up to 2 inventories per month with unique session tracking
+- **📱 QR Code Generation & Scanning**: Generate QR codes from CSV files and scan them to update inventory
+- **📋 Google Sheets Integration**: Automatic data storage and retrieval with smart caching
+- **☁️ Smart Google Drive Storage**: Automatic backup with 30-day cleanup and smart download flow
+- **🏪 Multi-Location Support**: Support for both Agencies and Bodegas (Suzuki, Alfa Romeo, Renault, etc.)
+- **🎯 Session Management**: Complete inventory session lifecycle with user tracking
+- **📄 CSV Processing**: Upload and process CSV files with car inventory data
+- **💾 File Management**: Download and manage stored inventory files (CSV/Excel)
+- **✅ Input Validation**: Comprehensive data validation and sanitization
+- **🔒 Security Features**: Rate limiting, CORS, Helmet security headers
+- **📈 Logging & Monitoring**: Request logging, error tracking, and health monitoring
+- **🛡️ Error Handling**: Graceful error handling with meaningful messages and automatic retry
 
 ## 🏗️ Project Structure
 
@@ -33,8 +34,9 @@ backend/
 │   │   ├── downloadRoutes.js # File download routes
 │   │   └── validationRoutes.js # Data validation routes
 │   ├── services/
-│   │   ├── googleSheets.js   # Google Sheets service
+│   │   ├── googleSheets.js   # Google Sheets service with quota management
 │   │   ├── googleDrive.js    # Google Drive service
+│   │   ├── websocketService.js # Real-time WebSocket collaboration
 │   │   ├── fileStorageService.js # File storage management
 │   │   ├── cleanupScheduler.js # Automatic file cleanup
 │   │   ├── inventoryService.js # Inventory business logic
@@ -47,6 +49,17 @@ backend/
 │       └── validation.js     # Enhanced validation utilities
 ├── credentials/
 │   └── google-credentials.json # Google service account credentials
+├── scripts/                  # 🧪 Testing and utility scripts
+│   ├── test-websocket.js     # WebSocket functionality tests
+│   ├── load-test-websocket.js # WebSocket load testing
+│   ├── pre-test-validation.js # System readiness validation
+│   ├── minimal-quota-test.js # Minimal quota validation
+│   ├── real-world-load-test.js # Production load testing
+│   ├── quota-recovery-test.js # Quota management tests
+│   ├── setup-oauth-production.js # Google OAuth setup
+│   ├── get-base64-credentials.js # Credential encoding utility
+│   ├── deploy.sh             # Production deployment script
+│   └── start-production.sh   # Production startup script
 ├── docs/                     # 📚 Complete documentation library
 │   ├── QR_IMPLEMENTATION_GUIDE.md # Frontend integration guide
 │   ├── GOOGLE_DRIVE_INTEGRATION_GUIDE.md # Google Drive setup
@@ -158,6 +171,13 @@ Server will start on `http://localhost:5000`
 - **🚀 [Production Deployment Guide](docs/PRODUCTION_DEPLOYMENT_GUIDE.md)** - Production setup
 - **🎨 [Frontend Implementation Guide](docs/FRONTEND_IMPLEMENTATION_GUIDE.md)** - Frontend Google Drive integration
 - **📋 [Project Structure](docs/PROJECT_STRUCTURE.md)** - Code organization
+
+### **🧪 Testing & Validation**
+- **🔄 [WebSocket Implementation Guide](docs/WEBSOCKET_IMPLEMENTATION.md)** - Real-time collaboration setup
+- **🎯 [Frontend WebSocket Integration](docs/FRONTEND_WEBSOCKET_INTEGRATION.md)** - Frontend integration guide
+- **📊 [Real-World Scenario Analysis](docs/REAL_WORLD_SCENARIO_ANALYSIS.md)** - Production load analysis
+- **📈 [Quota Increase Guide](docs/QUOTA_INCREASE_GUIDE.md)** - Google API quota management
+- **📋 [Year-Long Testing Guide](docs/YEAR_LONG_INFRASTRUCTURE_TESTING.md)** - Comprehensive testing
 
 ### **🆘 Support & Troubleshooting**
 - **🔧 [Google Sheets Troubleshooting](docs/GOOGLE_SHEETS_TROUBLESHOOTING.md)** - Common issues
@@ -616,21 +636,67 @@ Get comprehensive storage statistics.
 }
 ```
 
-## 🧪 Testing
+## 🧪 Testing & Validation
 
-### **Test Health Check**
+The system includes comprehensive testing capabilities to validate functionality, performance, and production readiness.
+
+### **🔍 System Validation**
 ```bash
-curl http://localhost:5000/health
+# Validate system readiness
+npm run test:validate
+
+# Test basic functionality with minimal load
+npm run test:minimal
 ```
 
-### **Test QR Code Generation (Upload CSV)**
+### **🔄 WebSocket Testing**
 ```bash
-# Upload test CSV file to generate QR codes
+# Test WebSocket functionality
+npm run test:websocket
+
+# Load test WebSocket connections
+npm run test:websocket:load
+```
+
+### **📊 Production Load Testing**
+```bash
+# Test real-world scenario (3 users, 100 scans each)
+npm run test:real-world
+
+# Test quota recovery and management
+npm run test:quota-recovery
+```
+
+### **🏥 Health Checks**
+```bash
+# Basic health check
+curl http://localhost:5000/health
+
+# Detailed health check with metrics
+curl http://localhost:5000/health/detailed
+```
+
+### **🧪 Manual Testing Examples**
+
+#### **Test QR Code Generation**
+```bash
 curl -X POST http://localhost:5000/api/qr/upload-csv \
   -F "csvFile=@test_inventory.csv" \
   -F "location=Bodega Coyote" \
   -F "user=test@example.com" \
   -F "userName=Test User"
+```
+
+#### **Test Real-Time Collaboration**
+```bash
+# Connect multiple WebSocket clients to test collaboration
+# Use the WebSocket testing scripts for automated testing
+```
+
+#### **Test Quota Limits**
+```bash
+# Run the real-world load test to see quota behavior
+npm run test:real-world
 ```
 
 ### **Test QR Code Scan**

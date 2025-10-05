@@ -1,15 +1,15 @@
 module.exports = {
-  // Rate limiting settings
+  // Rate limiting settings - OPTIMIZED FOR PRODUCTION
   rateLimiting: {
-    minRequestInterval: 100, // Minimum 100ms between requests
-    maxRequestsPerMinute: 50, // Conservative limit (Google allows 100)
+    minRequestInterval: 500, // Increased to 500ms between requests
+    maxRequestsPerMinute: 30, // Very conservative limit to avoid quota issues
   },
   
-  // Caching settings
+  // Caching settings - OPTIMIZED FOR PRODUCTION
   caching: {
     enabled: true,
-    duration: 30000, // 30 seconds cache
-    maxCacheSize: 100, // Maximum number of cached sheets
+    duration: 120000, // Increased to 2 minutes cache
+    maxCacheSize: 500, // Increased cache size for better performance
   },
   
   // Retry settings
@@ -19,21 +19,33 @@ module.exports = {
     maxDelay: 10000, // Maximum 10 seconds delay
   },
   
-  // Quota management
+  // Quota management - OPTIMIZED FOR PRODUCTION
   quota: {
-    // Google Sheets API limits
-    readRequestsPerMinute: 100,
-    writeRequestsPerMinute: 100,
+    // Google Sheets API limits (very conservative for production)
+    readRequestsPerMinute: 50,
+    writeRequestsPerMinute: 50,
     
     // Google Drive API limits
     driveReadRequestsPerMinute: 1000,
     driveWriteRequestsPerMinute: 1000,
     
-    // Safety margins (use 80% of actual limits)
-    safetyMargin: 0.8,
+    // Safety margins (use 60% of actual limits for production stability)
+    safetyMargin: 0.6,
     
     // Request tracking
     trackRequests: true,
+    
+    // Quota recovery settings
+    quotaRecoveryDelay: 90000, // 1.5 minutes wait for quota reset
+    maxQuotaRetries: 3,
+    
+    // Emergency quota management
+    emergencyMode: {
+      enabled: true,
+      triggerThreshold: 0.8, // Trigger at 80% quota usage
+      minRequestInterval: 1000, // 1 second between requests in emergency mode
+      maxRequestsPerMinute: 20, // Very low limit in emergency mode
+    }
   },
   
   // Google Drive settings
