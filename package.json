@@ -23,6 +23,7 @@
     "test:minimal": "node scripts/minimal-quota-test.js",
     "test:real-world": "node scripts/real-world-load-test.js",
     "test:quota-recovery": "node scripts/quota-recovery-test.js",
+    "test:retention": "node scripts/monthly-retention-test.js",
     "test:all": "npm run test:validate && npm run test:minimal && npm run test:real-world",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

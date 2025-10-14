@@ -56,6 +56,7 @@ backend/
 │   ├── minimal-quota-test.js # Minimal quota validation
 │   ├── real-world-load-test.js # Production load testing
 │   ├── quota-recovery-test.js # Quota management tests
+│   ├── monthly-retention-test.js # 30-day retention policy tests
 │   ├── setup-oauth-production.js # Google OAuth setup
 │   ├── get-base64-credentials.js # Credential encoding utility
 │   ├── deploy.sh             # Production deployment script
@@ -665,6 +666,18 @@ npm run test:real-world
 
 # Test quota recovery and management
 npm run test:quota-recovery
+
+# Test 30-day retention policy for Google Drive backups
+npm run test:retention
+```
+
+### **📅 Retention Policy Testing**
+```bash
+# Test Google Drive file cleanup after 30 days
+npm run test:retention
+
+# Note: Files created during test won't be deleted until 30 days later
+# This is the correct behavior - test verifies the system works properly
 ```
 
 ### **🏥 Health Checks**
