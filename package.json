@@ -1,7 +1,7 @@
 {
   "name": "car-inventory-backend",
   "version": "1.0.0",
-  "description": "Backend API for car inventory system with Google Sheets integration",
+  "description": "Backend API for car inventory system with QR code generation, Google Sheets integration, Google Drive storage, WebSocket collaboration, and advanced security features",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
@@ -30,9 +30,14 @@
   "keywords": [
     "car-inventory",
     "google-sheets",
+    "google-drive",
+    "qr-codes",
+    "websocket",
+    "real-time-collaboration",
     "inventory-management",
     "nodejs",
-    "express"
+    "express",
+    "production-ready"
   ],
   "author": "Your Name",
   "license": "MIT",

@@ -68,7 +68,7 @@ backend/
 │   ├── FRONTEND_IMPLEMENTATION_GUIDE.md # Frontend Google Drive integration
 │   ├── CHANGELOG.md         # Version history and features
 │   ├── IMPLEMENTATION_SUMMARY.md # Executive summary
-│   ├── env.template         # Environment configuration template
+│   ├── env.example          # Environment configuration template
 │   └── [other guides]       # Additional documentation
 ├── temp/                     # Temporary files for QR codes and downloads
 ├── test_inventory.csv        # Sample CSV file for testing
@@ -865,7 +865,7 @@ All comprehensive documentation is organized in the [`docs/`](docs/) folder:
 
 #### **🚀 Getting Started**
 - **[Project Structure](docs/PROJECT_STRUCTURE.md)** - Detailed project organization
-- **[Environment Configuration](docs/env.template)** - Environment variables setup
+- **[Environment Configuration](env.example)** - Environment variables setup
 
 #### **🔲 QR Code System** 
 - **[QR Implementation Guide](docs/QR_IMPLEMENTATION_GUIDE.md)** - Complete frontend integration guide
